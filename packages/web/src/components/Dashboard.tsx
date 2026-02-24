@@ -13,18 +13,21 @@ import { CI_STATUS } from "@composio/ao-core/types";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
+import { NewWorkPanel } from "./NewWorkPanel";
 
 interface DashboardProps {
   sessions: DashboardSession[];
   stats: DashboardStats;
   orchestratorId?: string | null;
   projectName?: string;
+  projects?: Array<{ id: string; name: string }>;
 }
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 
-export function Dashboard({ sessions, stats, orchestratorId, projectName }: DashboardProps) {
+export function Dashboard({ sessions, stats, orchestratorId, projectName, projects = [] }: DashboardProps) {
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
+  const [newWorkOpen, setNewWorkOpen] = useState(false);
   const grouped = useMemo(() => {
     const zones: Record<AttentionLevel, DashboardSession[]> = {
       merge: [],
@@ -103,6 +106,22 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
           </h1>
           <StatusLine stats={stats} />
         </div>
+        <div className="flex items-center gap-3">
+          {projects.length > 0 && (
+            <button
+              onClick={() => setNewWorkOpen(true)}
+              className="flex items-center gap-1.5 rounded-[7px] border border-[rgba(63,185,80,0.25)] px-4 py-2 text-[12px] font-semibold text-[var(--color-accent-green)] transition-all hover:-translate-y-px"
+              style={{
+                background: "linear-gradient(175deg, rgba(63,185,80,0.12) 0%, rgba(63,185,80,0.06) 100%)",
+                boxShadow: "0 1px 2px rgba(0,0,0,0.6), 0 3px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08)",
+              }}
+            >
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              New Work
+            </button>
+          )}
         {orchestratorId && (
           <a
             href={`/sessions/${encodeURIComponent(orchestratorId)}`}
@@ -115,7 +134,13 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName }: Dash
             </svg>
           </a>
         )}
+        </div>
       </div>
+
+      {/* New Work panel */}
+      {newWorkOpen && (
+        <NewWorkPanel projects={projects} onClose={() => setNewWorkOpen(false)} />
+      )}
 
       {/* Rate limit notice */}
       {anyRateLimited && !rateLimitDismissed && (

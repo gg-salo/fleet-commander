@@ -158,6 +158,7 @@ vi.mock("@/lib/services", () => ({
 
 import { GET as sessionsGET } from "@/app/api/sessions/route";
 import { POST as spawnPOST } from "@/app/api/spawn/route";
+import { POST as setupCIPOST } from "@/app/api/setup-ci/route";
 import { POST as sendPOST } from "@/app/api/sessions/[id]/send/route";
 import { POST as killPOST } from "@/app/api/sessions/[id]/kill/route";
 import { POST as restorePOST } from "@/app/api/sessions/[id]/restore/route";
@@ -430,6 +431,101 @@ describe("API Routes", () => {
       expect(res.status).toBe(409);
       const data = await res.json();
       expect(data.error).toMatch(/merged/);
+    });
+  });
+
+  // ── POST /api/setup-ci ──────────────────────────────────────────────
+
+  describe("POST /api/setup-ci", () => {
+    it("creates a CI setup session with valid projectId", async () => {
+      const req = makeRequest("/api/setup-ci", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await setupCIPOST(req);
+      expect(res.status).toBe(201);
+      const data = await res.json();
+      expect(data.session).toBeDefined();
+      expect(data.session.projectId).toBe("my-app");
+      expect(data.session.status).toBe("spawning");
+    });
+
+    it("calls spawn with branch and prompt", async () => {
+      const req = makeRequest("/api/setup-ci", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      await setupCIPOST(req);
+      expect(mockSessionManager.spawn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: "my-app",
+          branch: "chore/setup-ci",
+          prompt: expect.stringContaining("CI"),
+        }),
+      );
+    });
+
+    it("returns 400 when projectId is missing", async () => {
+      const req = makeRequest("/api/setup-ci", {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await setupCIPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/projectId/);
+    });
+
+    it("returns 400 with invalid JSON", async () => {
+      const req = makeRequest("/api/setup-ci", {
+        method: "POST",
+        body: "not json",
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await setupCIPOST(req);
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 400 for invalid projectId characters", async () => {
+      const req = makeRequest("/api/setup-ci", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my app!!" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await setupCIPOST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toMatch(/projectId/);
+    });
+
+    it("returns 404 for unknown project", async () => {
+      const req = makeRequest("/api/setup-ci", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "nonexistent" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await setupCIPOST(req);
+      expect(res.status).toBe(404);
+      const data = await res.json();
+      expect(data.error).toMatch(/not found/);
+    });
+
+    it("returns 500 when spawn fails", async () => {
+      (mockSessionManager.spawn as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error("tmux not available"),
+      );
+      const req = makeRequest("/api/setup-ci", {
+        method: "POST",
+        body: JSON.stringify({ projectId: "my-app" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await setupCIPOST(req);
+      expect(res.status).toBe(500);
+      const data = await res.json();
+      expect(data.error).toMatch(/tmux not available/);
     });
   });
 

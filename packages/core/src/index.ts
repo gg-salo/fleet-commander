@@ -59,6 +59,10 @@ export type { PromptBuildConfig } from "./prompt-builder.js";
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
 export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 
+// CI setup prompt — generates prompt for setting up CI + baseline tests
+export { generateCISetupPrompt } from "./ci-setup-prompt.js";
+export type { CISetupPromptConfig } from "./ci-setup-prompt.js";
+
 // Shared utilities
 export { shellEscape, escapeAppleScript, validateUrl, readLastJsonlEntry } from "./utils.js";
 

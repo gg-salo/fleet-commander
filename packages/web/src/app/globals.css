@@ -116,6 +116,11 @@ a:hover {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
 /* ── Orchestrator button ──────────────────────────────────────────────── */
 
 .orchestrator-btn {
