@@ -15,6 +15,10 @@ export type {
   ReviewDecision,
   MergeReadiness,
   PRState,
+  Plan,
+  PlanTask,
+  PlanStatus,
+  PlanId,
 } from "@composio/ao-core/types";
 
 import {

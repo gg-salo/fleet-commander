@@ -63,6 +63,17 @@ export type { OrchestratorPromptConfig } from "./orchestrator-prompt.js";
 export { generateCISetupPrompt } from "./ci-setup-prompt.js";
 export type { CISetupPromptConfig } from "./ci-setup-prompt.js";
 
+// Planning prompt — generates prompt for feature planning agent
+export { generatePlanningPrompt } from "./planning-prompt.js";
+export type { PlanningPromptConfig } from "./planning-prompt.js";
+
+// Plan store — flat-file JSON CRUD for plans
+export { readPlan, writePlan, listPlans, generatePlanId, getPlansDir } from "./plan-store.js";
+
+// Plan service — planning workflow orchestration
+export { createPlanService } from "./plan-service.js";
+export type { PlanService, PlanServiceDeps } from "./plan-service.js";
+
 // Shared utilities
 export { shellEscape, escapeAppleScript, validateUrl, readLastJsonlEntry } from "./utils.js";
 

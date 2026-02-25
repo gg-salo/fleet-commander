@@ -14,9 +14,11 @@ import {
   loadConfig,
   createPluginRegistry,
   createSessionManager,
+  createPlanService,
   type OrchestratorConfig,
   type PluginRegistry,
   type SessionManager,
+  type PlanService,
   type SCM,
   type ProjectConfig,
 } from "@composio/ao-core";
@@ -33,6 +35,7 @@ export interface Services {
   config: OrchestratorConfig;
   registry: PluginRegistry;
   sessionManager: SessionManager;
+  planService: PlanService;
 }
 
 // Cache in globalThis for Next.js HMR stability
@@ -70,8 +73,9 @@ async function initServices(): Promise<Services> {
   registry.register(pluginTrackerLinear);
 
   const sessionManager = createSessionManager({ config, registry });
+  const planService = createPlanService({ config, sessionManager, registry });
 
-  const services = { config, registry, sessionManager };
+  const services = { config, registry, sessionManager, planService };
   globalForServices._aoServices = services;
   return services;
 }
