@@ -757,7 +757,7 @@ export interface ReactionConfig {
   auto: boolean;
 
   /** What to do: send message to agent, notify human, auto-merge */
-  action: "send-to-agent" | "notify" | "auto-merge";
+  action: "send-to-agent" | "notify" | "auto-merge" | "spawn-review";
 
   /** Message to send (for send-to-agent) */
   message?: string;

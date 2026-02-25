@@ -24,7 +24,7 @@ import { generateSessionPrefix } from "./paths.js";
 
 const ReactionConfigSchema = z.object({
   auto: z.boolean().default(true),
-  action: z.enum(["send-to-agent", "notify", "auto-merge"]).default("notify"),
+  action: z.enum(["send-to-agent", "notify", "auto-merge", "spawn-review"]).default("notify"),
   message: z.string().optional(),
   priority: z.enum(["urgent", "action", "warning", "info"]).optional(),
   retries: z.number().optional(),
@@ -262,6 +262,12 @@ function applyDefaultReactions(config: OrchestratorConfig): OrchestratorConfig {
       auto: true,
       action: "notify",
       priority: "urgent",
+    },
+    "pr-created": {
+      auto: true,
+      action: "spawn-review",
+      retries: 1,
+      escalateAfter: 1,
     },
     "all-complete": {
       auto: true,

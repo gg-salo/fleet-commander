@@ -338,6 +338,47 @@ describe("Config Schema Validation", () => {
   });
 });
 
+describe("Config Validation - Reaction Actions", () => {
+  it("accepts spawn-review as a valid reaction action", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+      reactions: {
+        "pr-created": {
+          auto: true,
+          action: "spawn-review",
+          retries: 1,
+          escalateAfter: 1,
+        },
+      },
+    };
+
+    expect(() => validateConfig(config)).not.toThrow();
+  });
+
+  it("includes pr-created in default reactions", () => {
+    const config = {
+      projects: {
+        proj1: {
+          path: "/repos/test",
+          repo: "org/test",
+          defaultBranch: "main",
+        },
+      },
+    };
+
+    const validated = validateConfig(config);
+    expect(validated.reactions["pr-created"]).toBeDefined();
+    expect(validated.reactions["pr-created"].action).toBe("spawn-review");
+    expect(validated.reactions["pr-created"].auto).toBe(true);
+  });
+});
+
 describe("Config Defaults", () => {
   it("applies default session prefix from project ID", () => {
     const config = {

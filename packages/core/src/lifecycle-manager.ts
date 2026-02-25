@@ -35,6 +35,7 @@ import {
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
+import { generateReviewPrompt } from "./review-prompt.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -143,6 +144,8 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "merge-conflicts";
     case "merge.ready":
       return "approved-and-green";
+    case "pr.created":
+      return "pr-created";
     case "session.stuck":
       return "agent-stuck";
     case "session.needs_input":
@@ -404,6 +407,63 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           action: "auto-merge",
           escalated: false,
         };
+      }
+
+      case "spawn-review": {
+        // Spawn a review agent to review the PR
+        const session = await sessionManager.get(sessionId);
+        if (!session?.pr) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "spawn-review",
+            escalated: false,
+          };
+        }
+
+        const project = config.projects[projectId];
+        if (!project) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "spawn-review",
+            escalated: false,
+          };
+        }
+
+        try {
+          const reviewPrompt = generateReviewPrompt({
+            projectId,
+            project,
+            prNumber: session.pr.number,
+            prUrl: session.pr.url,
+            prBranch: session.pr.branch,
+            baseBranch: session.pr.baseBranch,
+            repo: project.repo,
+            issueId: session.issueId ?? undefined,
+            codingSessionId: sessionId,
+          });
+
+          await sessionManager.spawn({
+            projectId,
+            prompt: reviewPrompt,
+            branch: project.defaultBranch,
+          });
+
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "spawn-review",
+            escalated: false,
+          };
+        } catch {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "spawn-review",
+            escalated: false,
+          };
+        }
       }
     }
 

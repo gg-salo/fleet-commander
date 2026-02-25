@@ -67,6 +67,10 @@ export type { CISetupPromptConfig } from "./ci-setup-prompt.js";
 export { generatePlanningPrompt } from "./planning-prompt.js";
 export type { PlanningPromptConfig } from "./planning-prompt.js";
 
+// Review prompt — generates prompt for PR review agent
+export { generateReviewPrompt } from "./review-prompt.js";
+export type { ReviewPromptConfig } from "./review-prompt.js";
+
 // Plan store — flat-file JSON CRUD for plans
 export { readPlan, writePlan, listPlans, generatePlanId, getPlansDir } from "./plan-store.js";
 
