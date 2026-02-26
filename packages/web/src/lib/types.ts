@@ -19,6 +19,11 @@ export type {
   PlanTask,
   PlanStatus,
   PlanId,
+  Discovery,
+  DiscoveryFinding,
+  DiscoveryType,
+  DiscoveryStatus,
+  DiscoveryId,
 } from "@composio/ao-core/types";
 
 import {

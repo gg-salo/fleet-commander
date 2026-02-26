@@ -81,6 +81,31 @@ export { createEventStore } from "./event-store.js";
 export { createPlanService } from "./plan-service.js";
 export type { PlanService, PlanServiceDeps } from "./plan-service.js";
 
+// Discovery prompts — generates prompts for discovery agents
+export {
+  generateUXAuditPrompt,
+  generateCompetitorResearchPrompt,
+  generateCodeHealthPrompt,
+} from "./discovery-prompts.js";
+export type { DiscoveryPromptConfig } from "./discovery-prompts.js";
+
+// CLAUDE.md generator prompt
+export { generateClaudeMdPrompt } from "./claudemd-prompt.js";
+export type { ClaudeMdPromptConfig } from "./claudemd-prompt.js";
+
+// Discovery store — flat-file JSON CRUD for discoveries
+export {
+  readDiscovery,
+  writeDiscovery,
+  listDiscoveries,
+  generateDiscoveryId,
+  getDiscoveriesDir,
+} from "./discovery-store.js";
+
+// Discovery service — discovery workflow orchestration
+export { createDiscoveryService } from "./discovery-service.js";
+export type { DiscoveryService, DiscoveryServiceDeps } from "./discovery-service.js";
+
 // Shared utilities
 export { shellEscape, escapeAppleScript, validateUrl, readLastJsonlEntry } from "./utils.js";
 

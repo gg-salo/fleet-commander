@@ -18,6 +18,7 @@ import { NewWorkPanel } from "./NewWorkPanel";
 import { NotificationCenter } from "./NotificationCenter";
 import { SummaryPanel } from "./SummaryPanel";
 import { PlanHistory } from "./PlanHistory";
+import { DiscoveryHistory } from "./DiscoveryHistory";
 
 interface DashboardProps {
   sessions: DashboardSession[];
@@ -212,6 +213,9 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
 
       {/* Plan History */}
       {projects.length > 0 && <PlanHistory projects={projects} />}
+
+      {/* Discovery History */}
+      {projects.length > 0 && <DiscoveryHistory projects={projects} />}
 
       {/* PR Table */}
       {openPRs.length > 0 && (

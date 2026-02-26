@@ -15,12 +15,14 @@ import {
   createPluginRegistry,
   createSessionManager,
   createPlanService,
+  createDiscoveryService,
   createLifecycleManager,
   createEventStore,
   type OrchestratorConfig,
   type PluginRegistry,
   type SessionManager,
   type PlanService,
+  type DiscoveryService,
   type LifecycleManager,
   type EventStore,
   type SCM,
@@ -40,6 +42,7 @@ export interface Services {
   registry: PluginRegistry;
   sessionManager: SessionManager;
   planService: PlanService;
+  discoveryService: DiscoveryService;
   lifecycleManager: LifecycleManager;
   getEventStore(projectId: string): EventStore | null;
 }
@@ -80,6 +83,7 @@ async function initServices(): Promise<Services> {
 
   const sessionManager = createSessionManager({ config, registry });
   const planService = createPlanService({ config, sessionManager, registry });
+  const discoveryService = createDiscoveryService({ config, sessionManager, registry });
 
   // Create event stores for each project
   const eventStores = new Map<string, EventStore>();
@@ -105,6 +109,7 @@ async function initServices(): Promise<Services> {
     registry,
     sessionManager,
     planService,
+    discoveryService,
     lifecycleManager,
     getEventStore(projectId: string): EventStore | null {
       return eventStores.get(projectId) ?? null;
