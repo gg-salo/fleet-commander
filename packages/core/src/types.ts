@@ -747,6 +747,24 @@ export interface OrchestratorEvent {
   data: Record<string, unknown>;
 }
 
+/** Query options for filtering stored events */
+export interface EventQuery {
+  projectId?: string;
+  types?: EventType[];
+  priorities?: EventPriority[];
+  sessionId?: SessionId;
+  since?: Date;
+  limit?: number;
+  offset?: number;
+}
+
+/** Persistent event store backed by JSONL files */
+export interface EventStore {
+  append(event: OrchestratorEvent): void;
+  query(options: EventQuery): OrchestratorEvent[];
+  count(options: Omit<EventQuery, "limit" | "offset">): number;
+}
+
 // =============================================================================
 // REACTIONS
 // =============================================================================

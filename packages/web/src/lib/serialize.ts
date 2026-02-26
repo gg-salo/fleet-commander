@@ -15,7 +15,7 @@ import type {
   OrchestratorConfig,
   PluginRegistry,
 } from "@composio/ao-core";
-import type { DashboardSession, DashboardPR, DashboardStats } from "./types.js";
+import { type DashboardSession, type DashboardPR, type DashboardStats, type DailySummary, getAttentionLevel } from "./types";
 import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
@@ -374,6 +374,58 @@ export async function enrichSessionsMetadata(
   });
 
   await Promise.allSettled([...summaryPromises, ...issueTitlePromises]);
+}
+
+/** Compute daily summary from dashboard sessions. */
+export function computeDailySummary(
+  sessions: DashboardSession[],
+  pendingPlansCount: number = 0,
+): DailySummary {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const mergedToday: DailySummary["mergedToday"] = [];
+  const readyToMerge: DailySummary["readyToMerge"] = [];
+  const workingSessions: DailySummary["workingSessions"] = [];
+
+  for (const session of sessions) {
+    const attention = getAttentionLevel(session);
+
+    if (
+      session.pr?.state === "merged" &&
+      new Date(session.lastActivityAt) >= todayStart
+    ) {
+      mergedToday.push({
+        sessionId: session.id,
+        prTitle: session.pr.title,
+        prUrl: session.pr.url,
+      });
+    }
+
+    if (attention === "merge" && session.pr) {
+      readyToMerge.push({
+        sessionId: session.id,
+        prTitle: session.pr.title,
+        prUrl: session.pr.url,
+        prNumber: session.pr.number,
+      });
+    }
+
+    if (attention === "working") {
+      workingSessions.push({
+        sessionId: session.id,
+        summary: session.summary,
+      });
+    }
+  }
+
+  return {
+    mergedToday,
+    readyToMerge,
+    workingCount: workingSessions.length,
+    workingSessions,
+    pendingPlansCount,
+  };
 }
 
 /** Compute dashboard stats from a list of sessions. */

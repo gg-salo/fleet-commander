@@ -15,10 +15,14 @@ import {
   createPluginRegistry,
   createSessionManager,
   createPlanService,
+  createLifecycleManager,
+  createEventStore,
   type OrchestratorConfig,
   type PluginRegistry,
   type SessionManager,
   type PlanService,
+  type LifecycleManager,
+  type EventStore,
   type SCM,
   type ProjectConfig,
 } from "@composio/ao-core";
@@ -36,6 +40,8 @@ export interface Services {
   registry: PluginRegistry;
   sessionManager: SessionManager;
   planService: PlanService;
+  lifecycleManager: LifecycleManager;
+  getEventStore(projectId: string): EventStore | null;
 }
 
 // Cache in globalThis for Next.js HMR stability
@@ -75,7 +81,35 @@ async function initServices(): Promise<Services> {
   const sessionManager = createSessionManager({ config, registry });
   const planService = createPlanService({ config, sessionManager, registry });
 
-  const services = { config, registry, sessionManager, planService };
+  // Create event stores for each project
+  const eventStores = new Map<string, EventStore>();
+  for (const [projectId, project] of Object.entries(config.projects)) {
+    eventStores.set(projectId, createEventStore(config.configPath, project.path));
+  }
+
+  // Pick the first project's event store for the lifecycle manager (it persists all events)
+  const firstProjectId = Object.keys(config.projects)[0];
+  const firstEventStore = firstProjectId ? eventStores.get(firstProjectId) : undefined;
+
+  // Start lifecycle manager — polls sessions, detects transitions, persists events
+  const lifecycleManager = createLifecycleManager({
+    config,
+    registry,
+    sessionManager,
+    eventStore: firstEventStore,
+  });
+  lifecycleManager.start(30_000);
+
+  const services: Services = {
+    config,
+    registry,
+    sessionManager,
+    planService,
+    lifecycleManager,
+    getEventStore(projectId: string): EventStore | null {
+      return eventStores.get(projectId) ?? null;
+    },
+  };
   globalForServices._aoServices = services;
   return services;
 }

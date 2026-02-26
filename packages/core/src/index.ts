@@ -74,6 +74,9 @@ export type { ReviewPromptConfig } from "./review-prompt.js";
 // Plan store — flat-file JSON CRUD for plans
 export { readPlan, writePlan, listPlans, generatePlanId, getPlansDir } from "./plan-store.js";
 
+// Event store — JSONL-backed persistent event storage
+export { createEventStore } from "./event-store.js";
+
 // Plan service — planning workflow orchestration
 export { createPlanService } from "./plan-service.js";
 export type { PlanService, PlanServiceDeps } from "./plan-service.js";

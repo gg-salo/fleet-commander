@@ -209,3 +209,26 @@ a:hover {
     0 0 60px rgba(63,185,80,0.2),
     inset 0 1px 0 rgba(255,255,255,0.1);
 }
+
+/* ── Dependency graph ────────────────────────────────────────────────── */
+
+.dep-graph {
+  padding: 8px 0;
+}
+
+.dep-layer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.dep-node {
+  min-width: 140px;
+  max-width: 200px;
+  transition: border-color 0.12s ease;
+}
+
+.dep-node:hover {
+  border-color: var(--color-border-strong);
+}

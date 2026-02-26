@@ -8,6 +8,7 @@ import {
   enrichSessionPR,
   enrichSessionsMetadata,
   computeStats,
+  computeDailySummary,
 } from "@/lib/serialize";
 import { prCache, prCacheKey } from "@/lib/cache";
 import { getProjectName } from "@/lib/project-name";
@@ -24,9 +25,10 @@ export default async function Home() {
   let sessions: DashboardSession[] = [];
   let orchestratorId: string | null = null;
   let projects: Array<{ id: string; name: string }> = [];
+  let pendingPlansCount = 0;
   const projectName = getProjectName();
   try {
-    const { config, registry, sessionManager } = await getServices();
+    const { config, registry, sessionManager, planService } = await getServices();
     projects = Object.entries(config.projects).map(([id, p]) => ({ id, name: p.name ?? id }));
     const allSessions = await sessionManager.list();
 
@@ -98,11 +100,28 @@ export default async function Home() {
     // Cap enrichment at 4s — if GitHub is slow/rate-limited, serve stale data fast
     const enrichTimeout = new Promise<void>((resolve) => setTimeout(resolve, 4_000));
     await Promise.race([Promise.allSettled(enrichPromises), enrichTimeout]);
+
+    // Count pending plans across all projects
+    for (const [projectId] of Object.entries(config.projects)) {
+      try {
+        const planIds = planService.listPlans(projectId);
+        for (const planId of planIds) {
+          const plan = await planService.getPlan(projectId, planId);
+          if (plan && (plan.status === "planning" || plan.status === "ready")) {
+            pendingPlansCount++;
+          }
+        }
+      } catch {
+        // Plan listing failed — continue
+      }
+    }
   } catch {
     // Config not found or services unavailable — show empty dashboard
   }
 
+  const dailySummary = computeDailySummary(sessions, pendingPlansCount);
+
   return (
-    <Dashboard sessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} projects={projects} />
+    <Dashboard sessions={sessions} stats={computeStats(sessions)} orchestratorId={orchestratorId} projectName={projectName} projects={projects} dailySummary={dailySummary} />
   );
 }

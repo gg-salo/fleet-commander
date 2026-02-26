@@ -31,6 +31,7 @@ import {
   type Notifier,
   type Session,
   type EventPriority,
+  type EventStore,
   type ProjectConfig as _ProjectConfig,
 } from "./types.js";
 import { updateMetadata } from "./metadata.js";
@@ -163,6 +164,7 @@ export interface LifecycleManagerDeps {
   config: OrchestratorConfig;
   registry: PluginRegistry;
   sessionManager: SessionManager;
+  eventStore?: EventStore;
 }
 
 /** Track attempt counts for reactions per session. */
@@ -173,7 +175,7 @@ interface ReactionTracker {
 
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
-  const { config, registry, sessionManager } = deps;
+  const { config, registry, sessionManager, eventStore } = deps;
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
@@ -337,6 +339,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         message: `Reaction '${reactionKey}' escalated after ${tracker.attempts} attempts`,
         data: { reactionKey, attempts: tracker.attempts },
       });
+      eventStore?.append(event);
       await notifyHuman(event, reactionConfig.priority ?? "urgent");
       return {
         reactionType: reactionKey,
@@ -382,6 +385,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           message: `Reaction '${reactionKey}' triggered notification`,
           data: { reactionKey },
         });
+        eventStore?.append(event);
         await notifyHuman(event, reactionConfig.priority ?? "info");
         return {
           reactionType: reactionKey,
@@ -400,6 +404,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
           message: `Reaction '${reactionKey}' triggered auto-merge`,
           data: { reactionKey },
         });
+        eventStore?.append(event);
         await notifyHuman(event, "action");
         return {
           reactionType: reactionKey,
@@ -530,6 +535,15 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Handle transition: notify humans and/or trigger reactions
       const eventType = statusToEventType(oldStatus, newStatus);
       if (eventType) {
+        // Persist event to store
+        const transitionEvent = createEvent(eventType, {
+          sessionId: session.id,
+          projectId: session.projectId,
+          message: `${session.id}: ${oldStatus} → ${newStatus}`,
+          data: { oldStatus, newStatus },
+        });
+        eventStore?.append(transitionEvent);
+
         let reactionHandledNotify = false;
         const reactionKey = eventToReactionKey(eventType);
 

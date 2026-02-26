@@ -5,6 +5,7 @@ import {
   type DashboardSession,
   type DashboardStats,
   type DashboardPR,
+  type DailySummary,
   type AttentionLevel,
   getAttentionLevel,
   isPRRateLimited,
@@ -14,6 +15,9 @@ import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
 import { NewWorkPanel } from "./NewWorkPanel";
+import { NotificationCenter } from "./NotificationCenter";
+import { SummaryPanel } from "./SummaryPanel";
+import { PlanHistory } from "./PlanHistory";
 
 interface DashboardProps {
   sessions: DashboardSession[];
@@ -21,11 +25,12 @@ interface DashboardProps {
   orchestratorId?: string | null;
   projectName?: string;
   projects?: Array<{ id: string; name: string }>;
+  dailySummary?: DailySummary;
 }
 
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 
-export function Dashboard({ sessions, stats, orchestratorId, projectName, projects = [] }: DashboardProps) {
+export function Dashboard({ sessions, stats, orchestratorId, projectName, projects = [], dailySummary }: DashboardProps) {
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [newWorkOpen, setNewWorkOpen] = useState(false);
   const grouped = useMemo(() => {
@@ -107,6 +112,7 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
           <StatusLine stats={stats} />
         </div>
         <div className="flex items-center gap-3">
+          <NotificationCenter />
           {projects.length > 0 && (
             <button
               onClick={() => setNewWorkOpen(true)}
@@ -165,6 +171,9 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
         </div>
       )}
 
+      {/* Daily summary */}
+      {dailySummary && <SummaryPanel summary={dailySummary} />}
+
       {/* Kanban columns for active zones */}
       {hasKanbanSessions && (
         <div className="mb-8 flex gap-4 overflow-x-auto pb-2">
@@ -200,6 +209,9 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
           />
         </div>
       )}
+
+      {/* Plan History */}
+      {projects.length > 0 && <PlanHistory projects={projects} />}
 
       {/* PR Table */}
       {openPRs.length > 0 && (

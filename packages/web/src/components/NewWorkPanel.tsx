@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Plan, PlanTask } from "@/lib/types";
+import { DependencyGraph } from "./DependencyGraph";
 
 type PlanStep = "select" | "describe" | "planning" | "review" | "executing" | "done";
 
@@ -365,6 +366,13 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
           {/* ─── Step: Review ─── */}
           {planStep === "review" && (
             <div>
+              {/* Dependency graph (only when tasks have dependencies) */}
+              {editedTasks.some((t) => t.dependencies.length > 0) && (
+                <div className="mb-4">
+                  <DependencyGraph tasks={editedTasks} />
+                </div>
+              )}
+
               <div className="mb-4 space-y-3">
                 {editedTasks.map((task) => (
                   <div

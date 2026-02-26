@@ -131,6 +131,14 @@ export interface DashboardStats {
   needsReview: number;
 }
 
+export interface DailySummary {
+  mergedToday: Array<{ sessionId: string; prTitle: string; prUrl: string }>;
+  readyToMerge: Array<{ sessionId: string; prTitle: string; prUrl: string; prNumber: number }>;
+  workingCount: number;
+  workingSessions: Array<{ sessionId: string; summary: string | null }>;
+  pendingPlansCount: number;
+}
+
 /** SSE snapshot event from /api/events */
 export interface SSESnapshotEvent {
   type: "snapshot";
