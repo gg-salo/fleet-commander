@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import {
   type DashboardSession,
   type DashboardStats,
@@ -9,8 +9,11 @@ import {
   type AttentionLevel,
   getAttentionLevel,
   isPRRateLimited,
+  TERMINAL_STATUSES,
+  TERMINAL_ACTIVITIES,
 } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
+import { useLiveSessions } from "@/hooks/use-live-sessions";
 import { AttentionZone } from "./AttentionZone";
 import { PRTableRow } from "./PRStatus";
 import { DynamicFavicon } from "./DynamicFavicon";
@@ -32,6 +35,7 @@ interface DashboardProps {
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 
 export function Dashboard({ sessions, stats, orchestratorId, projectName, projects = [], dailySummary }: DashboardProps) {
+  const { liveSessions, liveStats } = useLiveSessions(sessions, stats);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [newWorkOpen, setNewWorkOpen] = useState(false);
   const grouped = useMemo(() => {
@@ -43,29 +47,51 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
       working: [],
       done: [],
     };
-    for (const session of sessions) {
+    for (const session of liveSessions) {
       zones[getAttentionLevel(session)].push(session);
     }
     return zones;
-  }, [sessions]);
+  }, [liveSessions]);
 
   const openPRs = useMemo(() => {
-    return sessions
+    return liveSessions
       .filter((s): s is DashboardSession & { pr: DashboardPR } => s.pr?.state === "open")
       .map((s) => s.pr)
       .sort((a, b) => mergeScore(a) - mergeScore(b));
-  }, [sessions]);
+  }, [liveSessions]);
 
-  const handleSend = async (sessionId: string, message: string) => {
+  const handleSend = useCallback(async (sessionId: string, message: string) => {
+    // Check if session is terminal — restore first
+    const session = liveSessions.find((s) => s.id === sessionId);
+    if (session) {
+      const isTerminal =
+        TERMINAL_STATUSES.has(session.status) ||
+        (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
+
+      if (isTerminal) {
+        const restoreRes = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restore`, {
+          method: "POST",
+        });
+        // 409 = already alive, that's fine — skip the wait
+        if (!restoreRes.ok && restoreRes.status !== 409) {
+          throw new Error(`Failed to restore session: ${await restoreRes.text()}`);
+        }
+        if (restoreRes.ok) {
+          // Wait for agent to boot
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+        }
+      }
+    }
+
     const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/send`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
     });
     if (!res.ok) {
-      console.error(`Failed to send message to ${sessionId}:`, await res.text());
+      throw new Error(`Failed to send message to ${sessionId}: ${await res.text()}`);
     }
-  };
+  }, [liveSessions]);
 
   const handleKill = async (sessionId: string) => {
     if (!confirm(`Kill session ${sessionId}?`)) return;
@@ -97,20 +123,20 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
   const hasKanbanSessions = KANBAN_LEVELS.some((l) => grouped[l].length > 0);
 
   const anyRateLimited = useMemo(
-    () => sessions.some((s) => s.pr && isPRRateLimited(s.pr)),
-    [sessions],
+    () => liveSessions.some((s) => s.pr && isPRRateLimited(s.pr)),
+    [liveSessions],
   );
 
   return (
     <div className="px-8 py-7">
-      <DynamicFavicon sessions={sessions} projectName={projectName} />
+      <DynamicFavicon sessions={liveSessions} projectName={projectName} />
       {/* Header */}
       <div className="mb-8 flex items-center justify-between border-b border-[var(--color-border-subtle)] pb-6">
         <div className="flex items-center gap-6">
           <h1 className="text-[17px] font-semibold tracking-[-0.02em] text-[var(--color-text-primary)]">
             Orchestrator
           </h1>
-          <StatusLine stats={stats} />
+          <StatusLine stats={liveStats} />
         </div>
         <div className="flex items-center gap-3">
           <NotificationCenter />

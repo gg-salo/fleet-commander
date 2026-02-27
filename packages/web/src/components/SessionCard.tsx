@@ -18,7 +18,7 @@ import { ActivityDot } from "./ActivityDot";
 
 interface SessionCardProps {
   session: DashboardSession;
-  onSend?: (sessionId: string, message: string) => void;
+  onSend?: (sessionId: string, message: string) => Promise<void>;
   onKill?: (sessionId: string) => void;
   onMerge?: (prNumber: number) => void;
   onRestore?: (sessionId: string) => void;
@@ -45,10 +45,16 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
   }, []);
 
   const handleAction = async (action: string, message: string) => {
-    setSendingAction(action);
-    onSend?.(session.id, message);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setSendingAction(null), 2000);
+    const prefix = isTerminal ? "restoring:" : "";
+    setSendingAction(`${prefix}${action}`);
+    try {
+      await onSend?.(session.id, message);
+      setSendingAction(`done:${action}`);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setSendingAction(null), 2000);
+    } catch {
+      setSendingAction(null);
+    }
   };
 
   const rateLimited = pr ? isPRRateLimited(pr) : false;
@@ -181,10 +187,16 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
                   {alert.actionLabel && session.activity !== "active" && (
                     <button
                       onClick={(e) => { e.stopPropagation(); handleAction(alert.key, alert.actionMessage ?? ""); }}
-                      disabled={sendingAction === alert.key}
+                      disabled={sendingAction !== null && sendingAction.endsWith(alert.key)}
                       className="rounded border border-[rgba(88,166,255,0.25)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)] disabled:opacity-50"
                     >
-                      {sendingAction === alert.key ? "sent!" : alert.actionLabel}
+                      {sendingAction === `restoring:${alert.key}`
+                        ? "restoring…"
+                        : sendingAction === `done:${alert.key}`
+                          ? "sent!"
+                          : isTerminal
+                            ? alert.actionLabel.replace("ask to", "respawn &")
+                            : alert.actionLabel}
                     </button>
                   )}
                 </span>
@@ -329,7 +341,7 @@ function getAlerts(session: DashboardSession): Alert[] {
         className: "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
         url: failedCheck?.url ?? pr.url + "/checks",
         actionLabel: "ask to fix",
-        actionMessage: `Please fix the failing CI checks on ${pr.url}`,
+        actionMessage: `Please fix the failing CI checks on ${pr.url}. Also review any PR comments (from reviewers or bots like CodeRabbit) — address ones that make sense, dismiss ones that are noise or false positives.`,
       });
     }
   }
