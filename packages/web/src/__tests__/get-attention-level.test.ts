@@ -190,6 +190,54 @@ describe("getAttentionLevel", () => {
     });
   });
 
+  // ── ACTIVE AGENT OVERRIDE ─────────────────────────────────────────
+
+  describe("active agent override", () => {
+    it("returns working when agent is active even with mergeable PR", () => {
+      const pr = makePR({
+        mergeability: {
+          mergeable: true,
+          ciPassing: true,
+          approved: true,
+          noConflicts: true,
+          blockers: [],
+        },
+      });
+      const session = makeSession({ status: "pr_open", activity: "active", pr });
+      expect(getAttentionLevel(session)).toBe("working");
+    });
+
+    it("returns merge when agent is idle with mergeable PR (preserves existing behavior)", () => {
+      const pr = makePR({
+        mergeability: {
+          mergeable: true,
+          ciPassing: true,
+          approved: true,
+          noConflicts: true,
+          blockers: [],
+        },
+      });
+      const session = makeSession({ status: "pr_open", activity: "idle", pr });
+      expect(getAttentionLevel(session)).toBe("merge");
+    });
+
+    it("returns working when agent is active with CI failing (agent might be fixing)", () => {
+      const pr = makePR({
+        ciStatus: "failing",
+        ciChecks: [{ name: "test", status: "failed" }],
+        mergeability: {
+          mergeable: false,
+          ciPassing: false,
+          approved: true,
+          noConflicts: true,
+          blockers: ["CI failing"],
+        },
+      });
+      const session = makeSession({ status: "ci_failed", activity: "active", pr });
+      expect(getAttentionLevel(session)).toBe("working");
+    });
+  });
+
   // ── WORKING (blue zone — agents doing their thing) ─────────────────
 
   describe("working zone", () => {

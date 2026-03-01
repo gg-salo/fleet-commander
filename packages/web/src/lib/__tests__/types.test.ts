@@ -22,7 +22,7 @@ function createSession(overrides?: Partial<DashboardSession>): DashboardSession 
     id: "test-1",
     projectId: "test",
     status: "working",
-    activity: "active",
+    activity: "idle",
     branch: "feat/test",
     issueId: null,
     issueUrl: null,

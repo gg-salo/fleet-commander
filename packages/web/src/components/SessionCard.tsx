@@ -11,7 +11,7 @@ import {
 } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { cn } from "@/lib/cn";
-import { getSessionTitle } from "@/lib/format";
+import { getSessionTitle, relativeTime, activityLabel, activityTextColor } from "@/lib/format";
 import { PRStatus } from "./PRStatus";
 import { CICheckList } from "./CIBadge";
 import { ActivityDot } from "./ActivityDot";
@@ -63,7 +63,11 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
   const isTerminal =
     TERMINAL_STATUSES.has(session.status) ||
     (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
-  const isRestorable = isTerminal && session.status !== "merged";
+  const isLikelyZombie =
+    !isTerminal &&
+    session.activity === "idle" &&
+    Date.now() - new Date(session.lastActivityAt).getTime() > 10 * 60 * 1000;
+  const isRestorable = (isTerminal && session.status !== "merged") || isLikelyZombie;
 
   const title = getSessionTitle(session);
 
@@ -90,9 +94,8 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
         setExpanded(!expanded);
       }}
     >
-      {/* Header row: dot + session ID + terminal link */}
-      <div className="flex items-center gap-2 px-4 pt-4 pb-2">
-        <ActivityDot activity={session.activity} />
+      {/* Header row: session ID + buttons */}
+      <div className="flex items-center gap-2 px-4 pt-4 pb-1">
         <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
           {session.id}
         </span>
@@ -102,7 +105,7 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
             onClick={(e) => { e.stopPropagation(); onRestore?.(session.id); }}
             className="rounded border border-[rgba(88,166,255,0.35)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
           >
-            restore
+            {isLikelyZombie ? "restart" : "restore"}
           </button>
         )}
         {!isTerminal && (
@@ -116,13 +119,26 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
         )}
       </div>
 
+      {/* Activity status line: dot + label + relative time */}
+      <div className="flex items-center gap-1.5 px-4 pb-2">
+        <ActivityDot activity={session.activity} dotOnly size={6} />
+        <span className="text-[11px] font-medium" style={{ color: activityTextColor(session.activity) }}>
+          {activityLabel(session.activity, session.status)}
+        </span>
+        <span className="text-[9px] text-[var(--color-border-strong)]">&middot;</span>
+        <span className="text-[11px] text-[var(--color-text-tertiary)]">
+          {relativeTime(session.lastActivityAt)}
+        </span>
+      </div>
+
       {/* Title — its own row, bigger, can wrap */}
       <div className="px-4 pb-3">
         <p className={cn(
           "leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3] overflow-hidden",
           level === "working"
             ? "text-[13px] font-medium text-[var(--color-text-secondary)]"
-            : "text-[14px] font-semibold text-[var(--color-text-primary)]"
+            : "text-[14px] font-semibold text-[var(--color-text-primary)]",
+          session.summaryIsFallback && !session.pr?.title && "italic opacity-60",
         )}>
           {title}
         </p>
@@ -154,10 +170,10 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
         </div>
       )}
 
-      {/* Merge button or alert tags */}
+      {/* Merge button and/or alert tags */}
       {!rateLimited && (alerts.length > 0 || isReadyToMerge) && (
-        <div className="px-4 pb-3.5 pt-0.5">
-          {isReadyToMerge && pr ? (
+        <div className="px-4 pb-3.5 pt-0.5 space-y-2">
+          {isReadyToMerge && pr && (
             <button
               onClick={(e) => { e.stopPropagation(); onMerge?.(pr.number); }}
               className="inline-flex items-center gap-1.5 rounded-[5px] border-0 bg-[var(--color-status-ready)] px-3 py-1.5 text-[12px] font-semibold text-[var(--color-text-inverse)] transition-[filter,transform] duration-[100ms] hover:-translate-y-px hover:brightness-110"
@@ -167,7 +183,8 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
               </svg>
               Merge PR #{pr.number}
             </button>
-          ) : (
+          )}
+          {alerts.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {alerts.map((alert) => (
                 <span key={alert.key} className="inline-flex items-center gap-1">
@@ -209,6 +226,14 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
       {/* Expandable detail panel */}
       {expanded && (
         <div className="border-t border-[var(--color-border-subtle)] px-4 py-3.5">
+          <DetailSection label="Timeline">
+            <p className="text-[12px] text-[var(--color-text-secondary)]">
+              Created {relativeTime(session.createdAt)}
+              {" · "}
+              Last active {relativeTime(session.lastActivityAt)}
+            </p>
+          </DetailSection>
+
           {session.summary && pr?.title && session.summary !== pr.title && (
             <DetailSection label="Summary">
               <p className="text-[12px] leading-relaxed text-[var(--color-text-secondary)]">
@@ -278,7 +303,7 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
                 onClick={(e) => { e.stopPropagation(); onRestore?.(session.id); }}
                 className="rounded border border-[rgba(88,166,255,0.35)] px-2.5 py-1 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
               >
-                restore session
+                {isLikelyZombie ? "restart session" : "restore session"}
               </button>
             )}
             {!isTerminal && (
@@ -324,7 +349,12 @@ function getAlerts(session: DashboardSession): Alert[] {
 
   const alerts: Alert[] = [];
 
-  if (pr.ciStatus === CI_STATUS.FAILING) {
+  const hasCIFail = pr.ciStatus === CI_STATUS.FAILING;
+  const hasConflict = !pr.mergeability.noConflicts;
+  const hasComments = pr.unresolvedThreads > 0;
+
+  // CI failure — never suppressed, action message covers comments too
+  if (hasCIFail) {
     const failedCheck = pr.ciChecks.find((c) => c.status === "failed");
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
     if (failCount === 0) {
@@ -346,25 +376,8 @@ function getAlerts(session: DashboardSession): Alert[] {
     }
   }
 
-  if (pr.reviewDecision === "changes_requested") {
-    alerts.push({
-      key: "changes",
-      label: "changes requested",
-      className: "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
-      url: pr.url,
-    });
-  } else if (!pr.isDraft && (pr.reviewDecision === "pending" || pr.reviewDecision === "none")) {
-    alerts.push({
-      key: "review",
-      label: "needs review",
-      className: "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--color-status-attention)]",
-      url: pr.url,
-      actionLabel: "ask to post",
-      actionMessage: `Post ${pr.url} on slack asking for a review.`,
-    });
-  }
-
-  if (!pr.mergeability.noConflicts) {
+  // Merge conflict — never suppressed
+  if (hasConflict) {
     alerts.push({
       key: "conflict",
       label: "merge conflict",
@@ -375,7 +388,8 @@ function getAlerts(session: DashboardSession): Alert[] {
     });
   }
 
-  if (pr.unresolvedThreads > 0) {
+  // Unresolved comments — suppressed when CI is failing (ci-fail action covers them)
+  if (hasComments && !hasCIFail) {
     const firstUrl = pr.unresolvedComments[0]?.url ?? pr.url + "/files";
     alerts.push({
       key: "comments",
@@ -385,6 +399,32 @@ function getAlerts(session: DashboardSession): Alert[] {
       url: firstUrl,
       actionLabel: "ask to resolve",
       actionMessage: `Please address all unresolved review comments on ${pr.url}`,
+    });
+  }
+
+  // Changes requested — info-only label when comments or CI are shown
+  if (pr.reviewDecision === "changes_requested") {
+    alerts.push({
+      key: "changes",
+      label: "changes requested",
+      className: "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
+      url: pr.url,
+    });
+  }
+
+  // Needs review — info-only label when any other alert is present
+  const hasActionableAlert = hasCIFail || hasConflict || hasComments;
+  if (
+    !hasActionableAlert &&
+    !pr.isDraft &&
+    pr.reviewDecision !== "changes_requested" &&
+    (pr.reviewDecision === "pending" || pr.reviewDecision === "none")
+  ) {
+    alerts.push({
+      key: "review",
+      label: "needs review",
+      className: "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--color-status-attention)]",
+      url: pr.url,
     });
   }
 

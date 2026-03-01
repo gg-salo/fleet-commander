@@ -35,7 +35,7 @@ interface DashboardProps {
 const KANBAN_LEVELS = ["working", "pending", "review", "respond", "merge"] as const;
 
 export function Dashboard({ sessions, stats, orchestratorId, projectName, projects = [], dailySummary }: DashboardProps) {
-  const { liveSessions, liveStats } = useLiveSessions(sessions, stats);
+  const { liveSessions, liveStats, refresh } = useLiveSessions(sessions, stats);
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [newWorkOpen, setNewWorkOpen] = useState(false);
   const grouped = useMemo(() => {
@@ -91,7 +91,8 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
     if (!res.ok) {
       throw new Error(`Failed to send message to ${sessionId}: ${await res.text()}`);
     }
-  }, [liveSessions]);
+    setTimeout(() => void refresh(), 1500);
+  }, [liveSessions, refresh]);
 
   const handleKill = async (sessionId: string) => {
     if (!confirm(`Kill session ${sessionId}?`)) return;
@@ -100,14 +101,18 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
     });
     if (!res.ok) {
       console.error(`Failed to kill ${sessionId}:`, await res.text());
+      return;
     }
+    await refresh();
   };
 
   const handleMerge = async (prNumber: number) => {
     const res = await fetch(`/api/prs/${prNumber}/merge`, { method: "POST" });
     if (!res.ok) {
       console.error(`Failed to merge PR #${prNumber}:`, await res.text());
+      return;
     }
+    await refresh();
   };
 
   const handleRestore = async (sessionId: string) => {
@@ -117,7 +122,9 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
     });
     if (!res.ok) {
       console.error(`Failed to restore ${sessionId}:`, await res.text());
+      return;
     }
+    setTimeout(() => void refresh(), 2000);
   };
 
   const hasKanbanSessions = KANBAN_LEVELS.some((l) => grouped[l].length > 0);
@@ -291,10 +298,10 @@ function StatusLine({ stats }: { stats: DashboardStats }) {
     return <span className="text-[13px] text-[var(--color-text-muted)]">no sessions</span>;
   }
 
-  const parts: Array<{ value: number; label: string; color?: string }> = [
+  const parts: Array<{ value: number; label: string; color?: string; pulse?: boolean }> = [
     { value: stats.totalSessions, label: "sessions" },
     ...(stats.workingSessions > 0
-      ? [{ value: stats.workingSessions, label: "active", color: "var(--color-status-working)" }]
+      ? [{ value: stats.workingSessions, label: "active", color: "var(--color-status-working)", pulse: true }]
       : []),
     ...(stats.openPRs > 0 ? [{ value: stats.openPRs, label: "PRs" }] : []),
     ...(stats.needsReview > 0
@@ -305,9 +312,15 @@ function StatusLine({ stats }: { stats: DashboardStats }) {
   return (
     <div className="flex items-baseline gap-0.5">
       {parts.map((p, i) => (
-        <span key={p.label} className="flex items-baseline">
+        <span key={p.label} className="flex items-center">
           {i > 0 && (
             <span className="mx-3 text-[11px] text-[var(--color-border-strong)]">·</span>
+          )}
+          {p.pulse && (
+            <span
+              className="mr-1.5 inline-block h-[7px] w-[7px] shrink-0 rounded-full animate-[activity-pulse_2s_ease-in-out_infinite]"
+              style={{ background: p.color }}
+            />
           )}
           <span
             className="text-[20px] font-bold tabular-nums tracking-tight"

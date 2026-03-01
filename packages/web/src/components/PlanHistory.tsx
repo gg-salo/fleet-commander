@@ -12,6 +12,7 @@ const STATUS_COLORS: Record<PlanStatus, string> = {
   done: "var(--color-accent-green)",
   failed: "var(--color-status-error)",
   executing: "var(--color-accent-blue)",
+  reconciling: "var(--color-accent-blue)",
   ready: "var(--color-status-attention)",
   approved: "var(--color-accent-green)",
   planning: "var(--color-text-muted)",

@@ -10,6 +10,7 @@ import type {
 interface LiveData {
   liveSessions: DashboardSession[];
   liveStats: DashboardStats;
+  refresh: () => Promise<void>;
 }
 
 /**
@@ -92,5 +93,5 @@ export function useLiveSessions(
     };
   }, [fetchFull, initialSessions]);
 
-  return { liveSessions: sessions, liveStats: stats };
+  return { liveSessions: sessions, liveStats: stats, refresh: fetchFull };
 }

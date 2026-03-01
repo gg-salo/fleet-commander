@@ -1,9 +1,9 @@
 /**
- * Tests for session title heuristic and branch humanization.
+ * Tests for session title heuristic, branch humanization, and utility functions.
  */
 
-import { describe, it, expect } from "vitest";
-import { humanizeBranch, getSessionTitle } from "../format";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { humanizeBranch, getSessionTitle, relativeTime, activityLabel, activityTextColor } from "../format";
 import type { DashboardSession } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -192,5 +192,113 @@ describe("getSessionTitle", () => {
     expect(getSessionTitle(session)).toBe(
       "You are working on Linear ticket INT-1327: Refactor session manager",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// relativeTime
+// ---------------------------------------------------------------------------
+
+describe("relativeTime", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns 'just now' for timestamps < 10s ago", () => {
+    const now = new Date().toISOString();
+    expect(relativeTime(now)).toBe("just now");
+  });
+
+  it("returns seconds for timestamps < 60s ago", () => {
+    vi.useFakeTimers();
+    const past = new Date(Date.now() - 30_000).toISOString();
+    expect(relativeTime(past)).toBe("30s ago");
+    vi.useRealTimers();
+  });
+
+  it("returns minutes for timestamps < 60m ago", () => {
+    vi.useFakeTimers();
+    const past = new Date(Date.now() - 3 * 60_000).toISOString();
+    expect(relativeTime(past)).toBe("3m ago");
+    vi.useRealTimers();
+  });
+
+  it("returns hours for timestamps < 24h ago", () => {
+    vi.useFakeTimers();
+    const past = new Date(Date.now() - 2 * 3600_000).toISOString();
+    expect(relativeTime(past)).toBe("2h ago");
+    vi.useRealTimers();
+  });
+
+  it("returns days for timestamps >= 24h ago", () => {
+    vi.useFakeTimers();
+    const past = new Date(Date.now() - 3 * 86400_000).toISOString();
+    expect(relativeTime(past)).toBe("3d ago");
+    vi.useRealTimers();
+  });
+
+  it("returns 'just now' for future timestamps", () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    expect(relativeTime(future)).toBe("just now");
+  });
+
+  it("returns 'just now' for invalid input", () => {
+    expect(relativeTime("not-a-date")).toBe("just now");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// activityLabel
+// ---------------------------------------------------------------------------
+
+describe("activityLabel", () => {
+  it("returns 'Agent starting…' when status is spawning", () => {
+    expect(activityLabel("idle", "spawning")).toBe("Agent starting…");
+    expect(activityLabel(null, "spawning")).toBe("Agent starting…");
+  });
+
+  it("returns correct label for each activity state", () => {
+    expect(activityLabel("active", "working")).toBe("Agent working…");
+    expect(activityLabel("ready", "working")).toBe("Agent ready");
+    expect(activityLabel("idle", "working")).toBe("Agent idle");
+    expect(activityLabel("waiting_input", "working")).toBe("Waiting for input");
+    expect(activityLabel("blocked", "working")).toBe("Agent blocked");
+    expect(activityLabel("exited", "done")).toBe("Agent exited");
+  });
+
+  it("returns 'Agent idle' for null or unknown activity", () => {
+    expect(activityLabel(null, "working")).toBe("Agent idle");
+    expect(activityLabel("unknown_state", "working")).toBe("Agent idle");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// activityTextColor
+// ---------------------------------------------------------------------------
+
+describe("activityTextColor", () => {
+  it("returns working color for active", () => {
+    expect(activityTextColor("active")).toBe("var(--color-status-working)");
+  });
+
+  it("returns ready color for ready", () => {
+    expect(activityTextColor("ready")).toBe("var(--color-status-ready)");
+  });
+
+  it("returns attention color for waiting_input", () => {
+    expect(activityTextColor("waiting_input")).toBe("var(--color-status-attention)");
+  });
+
+  it("returns error color for blocked", () => {
+    expect(activityTextColor("blocked")).toBe("var(--color-status-error)");
+  });
+
+  it("returns muted color for exited", () => {
+    expect(activityTextColor("exited")).toBe("var(--color-text-muted)");
+  });
+
+  it("returns secondary color for idle and unknown", () => {
+    expect(activityTextColor("idle")).toBe("var(--color-text-secondary)");
+    expect(activityTextColor(null)).toBe("var(--color-text-secondary)");
   });
 });

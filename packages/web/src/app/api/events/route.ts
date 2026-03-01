@@ -84,7 +84,7 @@ export async function GET(): Promise<Response> {
             clearInterval(heartbeat);
           }
         })();
-      }, 5000);
+      }, 3000);
     },
     cancel() {
       clearInterval(heartbeat);
