@@ -15,6 +15,7 @@ import {
   SESSION_STATUS,
   PR_STATE,
   CI_STATUS,
+  TERMINAL_STATUSES,
   type LifecycleManager,
   type SessionManager,
   type SessionId,
@@ -101,12 +102,13 @@ function createEvent(
 }
 
 /** Determine which event type corresponds to a status transition. */
-function statusToEventType(_from: SessionStatus | undefined, to: SessionStatus): EventType | null {
+function statusToEventType(from: SessionStatus | undefined, to: SessionStatus): EventType | null {
   switch (to) {
     case "working":
       return "session.working";
     case "pr_open":
-      return "pr.created";
+      // Distinguish initial PR creation from PR updates after review feedback
+      return from === "changes_requested" ? "pr.updated" : "pr.created";
     case "ci_failed":
       return "ci.failing";
     case "review_pending":
@@ -147,6 +149,8 @@ function eventToReactionKey(eventType: EventType): string | null {
       return "approved-and-green";
     case "pr.created":
       return "pr-created";
+    case "pr.updated":
+      return "pr-updated";
     case "session.stuck":
       return "agent-stuck";
     case "session.needs_input":
@@ -165,6 +169,13 @@ export interface LifecycleManagerDeps {
   registry: PluginRegistry;
   sessionManager: SessionManager;
   eventStore?: EventStore;
+  planService?: {
+    checkPlanCompletion(projectId: string, planId: string): Promise<boolean>;
+    spawnReadyTasks?(projectId: string, planId: string): Promise<void>;
+  };
+  reconciliationService?: {
+    create(projectId: string, planId: string): Promise<unknown>;
+  };
 }
 
 /** Track attempt counts for reactions per session. */
@@ -175,7 +186,7 @@ interface ReactionTracker {
 
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
-  const { config, registry, sessionManager, eventStore } = deps;
+  const { config, registry, sessionManager, eventStore, planService, reconciliationService } = deps;
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
@@ -356,13 +367,79 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       case "send-to-agent": {
         if (reactionConfig.message) {
           try {
-            await sessionManager.send(sessionId, reactionConfig.message);
+            let enrichedMessage = reactionConfig.message;
+
+            // Enrich CI failure messages with context
+            if (reactionKey === "ci-failed") {
+              const session = await sessionManager.get(sessionId);
+              if (session?.pr) {
+                const project = config.projects[session.projectId];
+                const scm = project?.scm
+                  ? registry.get<SCM>("scm", project.scm.plugin)
+                  : null;
+
+                if (scm) {
+                  try {
+                    const checks = await scm.getCIChecks(session.pr);
+                    const failingChecks = checks.filter((c) => c.status === "failed");
+
+                    let prSize = "";
+                    if (scm.getPRSummary) {
+                      try {
+                        const summary = await scm.getPRSummary(session.pr);
+                        prSize = `\n## Your PR\n- +${summary.additions} -${summary.deletions}\n`;
+                      } catch {
+                        // ignore
+                      }
+                    }
+
+                    // Check if sibling sessions merged recently
+                    let siblingNote = "";
+                    const planIdMeta = session.metadata["planId"];
+                    if (planIdMeta && project) {
+                      try {
+                        const allSessions = await sessionManager.list(session.projectId);
+                        const recentMerges = allSessions.filter(
+                          (s) =>
+                            s.id !== sessionId &&
+                            s.metadata["planId"] === planIdMeta &&
+                            s.status === "merged",
+                        );
+                        if (recentMerges.length > 0) {
+                          const mergedPRs = recentMerges
+                            .filter((s) => s.pr)
+                            .map((s) => `#${s.pr!.number}`)
+                            .join(", ");
+                          if (mergedPRs) {
+                            siblingNote = `\n## Note\nPR ${mergedPRs} merged since your branch was created. Consider rebasing first: \`git fetch origin && git rebase origin/${project.defaultBranch}\`\n`;
+                          }
+                        }
+                      } catch {
+                        // ignore
+                      }
+                    }
+
+                    if (failingChecks.length > 0) {
+                      const checksSection = failingChecks
+                        .map((c) => `- ${c.name} (FAILURE)${c.url ? ` — [View](${c.url})` : ""}`)
+                        .join("\n");
+
+                      enrichedMessage = `# CI Failed on PR #${session.pr.number}\n\n## Failing Checks\n${checksSection}\n${prSize}${siblingNote}\n## Instructions\n${reactionConfig.message}`;
+                    }
+                  } catch {
+                    // Fall back to static message
+                  }
+                }
+              }
+            }
+
+            await sessionManager.send(sessionId, enrichedMessage);
 
             return {
               reactionType: reactionKey,
               success: true,
               action: "send-to-agent",
-              message: reactionConfig.message,
+              message: enrichedMessage,
               escalated: false,
             };
           } catch {
@@ -466,6 +543,180 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             reactionType: reactionKey,
             success: false,
             action: "spawn-review",
+            escalated: false,
+          };
+        }
+      }
+
+      case "review-gate": {
+        // Fetch review comments and send them back to the coding agent
+        const session = await sessionManager.get(sessionId);
+        if (!session?.pr) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "review-gate",
+            escalated: false,
+          };
+        }
+
+        const project = config.projects[projectId];
+        if (!project) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "review-gate",
+            escalated: false,
+          };
+        }
+
+        const scm = project.scm
+          ? registry.get<SCM>("scm", project.scm.plugin)
+          : null;
+
+        if (!scm) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "review-gate",
+            escalated: false,
+          };
+        }
+
+        try {
+          // Fetch review comments
+          const reviews = await scm.getReviews(session.pr);
+          const pendingComments = await scm.getPendingComments(session.pr);
+
+          // Build feedback message from the latest change-requesting review
+          const latestChangesReview = reviews
+            .filter((r) => r.state === "changes_requested")
+            .sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime())[0];
+
+          const commentDetails = pendingComments
+            .map((c) => {
+              const location = c.path ? `\`${c.path}${c.line ? `:${c.line}` : ""}\`` : "";
+              return `- ${location} ${c.body}`;
+            })
+            .join("\n");
+
+          // Check if sibling sessions merged recently
+          let siblingNote = "";
+          const planIdMeta = session.metadata["planId"];
+          if (planIdMeta && project) {
+            try {
+              const allSessions = await sessionManager.list(session.projectId);
+              const recentMerges = allSessions.filter(
+                (s) =>
+                  s.id !== sessionId &&
+                  s.metadata["planId"] === planIdMeta &&
+                  s.status === "merged",
+              );
+              if (recentMerges.length > 0) {
+                const mergedPRs = recentMerges
+                  .filter((s) => s.pr)
+                  .map((s) => `#${s.pr!.number}`)
+                  .join(", ");
+                if (mergedPRs) {
+                  siblingNote = `\n## Note\nPR ${mergedPRs} merged since your branch was created. Consider rebasing first: \`git fetch origin && git rebase origin/${project.defaultBranch}\`\n`;
+                }
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          const feedbackMessage = `# Review Feedback — Changes Requested
+
+The review agent has requested changes on PR #${session.pr.number}.
+
+${latestChangesReview?.body ? `## Review Summary\n${latestChangesReview.body}\n` : ""}
+${commentDetails ? `## Inline Comments\n${commentDetails}\n` : ""}${siblingNote}
+## Instructions
+
+Please address all review feedback above, then push your fixes. The review agent will automatically re-review after you push.`;
+
+          await sessionManager.send(sessionId, feedbackMessage);
+
+          // Track review attempts in metadata
+          const reviewAttempts = parseInt(session.metadata["reviewAttempts"] ?? "0", 10) + 1;
+          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          updateMetadata(sessionsDir, sessionId, {
+            reviewAttempts: String(reviewAttempts),
+          });
+
+          // Emit feedback event
+          const feedbackEvent = createEvent("review.feedback_sent", {
+            sessionId,
+            projectId,
+            message: `Review feedback sent to ${sessionId} (attempt ${reviewAttempts})`,
+            data: { reviewAttempts, prNumber: session.pr.number },
+          });
+          eventStore?.append(feedbackEvent);
+
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "review-gate",
+            message: `Feedback sent (attempt ${reviewAttempts})`,
+            escalated: false,
+          };
+        } catch {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "review-gate",
+            escalated: false,
+          };
+        }
+      }
+
+      case "spawn-reconciliation": {
+        // Spawn a reconciliation agent to check cross-PR consistency
+        if (!reconciliationService) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "spawn-reconciliation",
+            message: "Reconciliation service not available",
+            escalated: false,
+          };
+        }
+
+        // The sessionId here is the session that triggered plan completion
+        const session = await sessionManager.get(sessionId);
+        const planIdFromMeta = session?.metadata["planId"];
+        if (!planIdFromMeta) {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "spawn-reconciliation",
+            escalated: false,
+          };
+        }
+
+        try {
+          await reconciliationService.create(projectId, planIdFromMeta);
+
+          const reconEvent = createEvent("reconciliation.started", {
+            sessionId,
+            projectId,
+            message: `Reconciliation started for plan ${planIdFromMeta}`,
+            data: { planId: planIdFromMeta },
+          });
+          eventStore?.append(reconEvent);
+
+          return {
+            reactionType: reactionKey,
+            success: true,
+            action: "spawn-reconciliation",
+            escalated: false,
+          };
+        } catch {
+          return {
+            reactionType: reactionKey,
+            success: false,
+            action: "spawn-reconciliation",
             escalated: false,
           };
         }
@@ -586,6 +837,94 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             });
             await notifyHuman(event, priority);
           }
+        }
+      }
+
+      // Dependency-based spawn ordering + auto-rebase:
+      // When a plan session merges, spawn tasks whose dependencies are now met
+      // and send rebase messages to sibling sessions.
+      if (
+        planService &&
+        newStatus === "merged" &&
+        session.metadata["planId"]
+      ) {
+        const planIdMeta = session.metadata["planId"];
+
+        // Spawn tasks whose dependencies are now resolved
+        if (planService.spawnReadyTasks) {
+          try {
+            await planService.spawnReadyTasks(session.projectId, planIdMeta);
+          } catch {
+            // Will retry on next poll
+          }
+        }
+
+        // Auto-rebase: send rebase command to sibling sessions
+        try {
+          const project = config.projects[session.projectId];
+          if (project) {
+            const allSessions = await sessionManager.list(session.projectId);
+            const siblings = allSessions.filter(
+              (s) =>
+                s.id !== session.id &&
+                s.metadata["planId"] === planIdMeta &&
+                s.activity !== "exited" &&
+                !TERMINAL_STATUSES.has(s.status),
+            );
+
+            const defaultBranch = project.defaultBranch;
+            const rebaseMsg = `A sibling PR (#${session.pr?.number ?? "?"}) just merged. Please rebase your branch on the latest ${defaultBranch}:
+git fetch origin && git rebase origin/${defaultBranch}
+Then force-push your branch. This ensures CI runs against the latest code.`;
+
+            for (const sibling of siblings) {
+              try {
+                await sessionManager.send(sibling.id, rebaseMsg);
+              } catch {
+                // Sibling may be dead — skip
+              }
+            }
+          }
+        } catch {
+          // Rebase notification failed — non-critical
+        }
+      }
+
+      // Plan completion detection: if this session belongs to a plan and
+      // just transitioned to a terminal state, check if the entire plan is done
+      if (
+        planService &&
+        TERMINAL_STATUSES.has(newStatus) &&
+        session.metadata["planId"]
+      ) {
+        try {
+          const planComplete = await planService.checkPlanCompletion(
+            session.projectId,
+            session.metadata["planId"],
+          );
+          if (planComplete) {
+            // Look up plan-complete reaction config
+            const planReactionKey = "plan-complete";
+            const project = config.projects[session.projectId];
+            const globalReaction = config.reactions[planReactionKey];
+            const projectReaction = project?.reactions?.[planReactionKey];
+            const reactionConfig = projectReaction
+              ? { ...globalReaction, ...projectReaction }
+              : globalReaction;
+
+            if (reactionConfig && reactionConfig.action) {
+              if (reactionConfig.auto !== false) {
+                await executeReaction(
+                  session.id,
+                  session.projectId,
+                  planReactionKey,
+                  reactionConfig as ReactionConfig,
+                );
+              }
+            }
+          }
+        } catch {
+          // Plan completion check failed — will retry next poll
         }
       }
     } else {

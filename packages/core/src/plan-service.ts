@@ -12,15 +12,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getPlansDir, readPlan, writePlan, generatePlanId, listPlans } from "./plan-store.js";
 import { generatePlanningPrompt } from "./planning-prompt.js";
-import type {
-  OrchestratorConfig,
-  SessionManager,
-  PluginRegistry,
-  Plan,
-  PlanId,
-  PlanTask,
-  Tracker,
-  ProjectConfig,
+import {
+  TERMINAL_STATUSES,
+  type OrchestratorConfig,
+  type SessionManager,
+  type PluginRegistry,
+  type Plan,
+  type PlanId,
+  type PlanTask,
+  type Tracker,
+  type ProjectConfig,
+  type SessionStatus,
 } from "./types.js";
 
 export interface PlanServiceDeps {
@@ -35,6 +37,16 @@ export interface PlanService {
   editPlan(projectId: string, planId: PlanId, tasks: PlanTask[]): Promise<Plan>;
   approvePlan(projectId: string, planId: PlanId): Promise<Plan>;
   listPlans(projectId: string): PlanId[];
+  /**
+   * Check if all sessions in a plan have reached terminal state.
+   * Returns the planId if complete, null otherwise.
+   */
+  checkPlanCompletion(projectId: string, planId: PlanId): Promise<boolean>;
+  /**
+   * Spawn tasks whose dependencies have all been merged.
+   * Called by lifecycle manager when a plan session merges.
+   */
+  spawnReadyTasks(projectId: string, planId: PlanId): Promise<void>;
 }
 
 export function createPlanService(deps: PlanServiceDeps): PlanService {
@@ -76,11 +88,12 @@ export function createPlanService(deps: PlanServiceDeps): PlanService {
       outputPath,
     });
 
-    // Spawn planning agent session on the default branch
+    // Spawn planning agent on a disposable branch (not defaultBranch, which
+    // may already be checked out in another worktree).
     const session = await sessionManager.spawn({
       projectId,
       prompt,
-      branch: project.defaultBranch,
+      branch: `plan/${planId}`,
     });
 
     // Update plan with session ID
@@ -124,6 +137,14 @@ export function createPlanService(deps: PlanServiceDeps): PlanService {
                 dependencies: Array.isArray(t.dependencies)
                   ? (t.dependencies as unknown[]).map(String)
                   : [],
+                affectedFiles: Array.isArray(t.affectedFiles)
+                  ? (t.affectedFiles as unknown[]).map(String)
+                  : undefined,
+                constraints: Array.isArray(t.constraints)
+                  ? (t.constraints as unknown[]).map(String)
+                  : undefined,
+                sharedContext:
+                  typeof t.sharedContext === "string" ? t.sharedContext : undefined,
               };
             });
             plan.status = "ready";
@@ -214,7 +235,22 @@ export function createPlanService(deps: PlanServiceDeps): PlanService {
             ? `\n\n## Acceptance Criteria\n${task.acceptanceCriteria.map((c) => `- [ ] ${c}`).join("\n")}\n`
             : "";
 
-        const body = `${task.description}${acSection}${depSection}\n\n**Scope:** ${task.scope}\n\n---\n*Created by Fleet Commander planning agent*`;
+        const constraintsSection =
+          task.constraints && task.constraints.length > 0
+            ? `\n\n## Constraints\n${task.constraints.map((c) => `- ${c}`).join("\n")}\n`
+            : "";
+
+        const affectedFilesSection =
+          task.affectedFiles && task.affectedFiles.length > 0
+            ? `\n\n## Affected Files\n${task.affectedFiles.map((f) => `- \`${f}\``).join("\n")}\n`
+            : "";
+
+        const sharedContextSection =
+          task.sharedContext
+            ? `\n\n## Shared Context\n${task.sharedContext}\n`
+            : "";
+
+        const body = `${task.description}${acSection}${depSection}${constraintsSection}${affectedFilesSection}${sharedContextSection}\n\n**Scope:** ${task.scope}\n\n---\n*Created by Fleet Commander planning agent*`;
 
         try {
           const issue = await trackerPlugin.createIssue(
@@ -238,8 +274,16 @@ export function createPlanService(deps: PlanServiceDeps): PlanService {
     plan.updatedAt = new Date().toISOString();
     writePlan(config.configPath, project.path, plan);
 
-    // Spawn coding agents for all tasks
+    // Spawn coding agents for tasks with no unresolved dependencies.
+    // Tasks with dependencies remain pending (no sessionId) until
+    // their dependencies merge, at which point spawnReadyTasks() spawns them.
     for (const task of plan.tasks) {
+      const hasUnresolvedDeps = task.dependencies.length > 0;
+      if (hasUnresolvedDeps) {
+        // Skip — will be spawned by spawnReadyTasks() after deps merge
+        continue;
+      }
+
       const issueId = task.issueUrl ?? undefined;
 
       try {
@@ -249,6 +293,15 @@ export function createPlanService(deps: PlanServiceDeps): PlanService {
           prompt: issueId ? undefined : task.description,
         });
         task.sessionId = session.id;
+
+        // Store planId in session metadata so lifecycle can detect plan completion
+        const projectObj = config.projects[projectId];
+        if (projectObj) {
+          const { getSessionsDir } = await import("./paths.js");
+          const { updateMetadata } = await import("./metadata.js");
+          const sessionsDir = getSessionsDir(config.configPath, projectObj.path);
+          updateMetadata(sessionsDir, session.id, { planId });
+        }
       } catch (err) {
         console.error(`Failed to spawn agent for task "${task.title}":`, err);
       }
@@ -264,11 +317,98 @@ export function createPlanService(deps: PlanServiceDeps): PlanService {
     return listPlans(config.configPath, project.path);
   }
 
+  async function checkPlanCompletion(
+    projectId: string,
+    planId: PlanId,
+  ): Promise<boolean> {
+    const project = resolveProject(projectId);
+    const plan = readPlan(config.configPath, project.path, planId);
+    if (!plan) return false;
+    if (plan.status !== "executing") return false;
+
+    // Check if all tasks with sessions have reached terminal state
+    const tasksWithSessions = plan.tasks.filter((t) => t.sessionId);
+    if (tasksWithSessions.length === 0) return false;
+
+    for (const task of tasksWithSessions) {
+      const session = await sessionManager.get(task.sessionId!);
+      if (!session) continue;
+      if (!TERMINAL_STATUSES.has(session.status as SessionStatus)) {
+        return false; // At least one session still active
+      }
+    }
+
+    return true;
+  }
+
+  async function spawnReadyTasks(projectId: string, planId: PlanId): Promise<void> {
+    const project = resolveProject(projectId);
+    const plan = readPlan(config.configPath, project.path, planId);
+    if (!plan || plan.status !== "executing") return;
+
+    // Find tasks that are waiting (have dependencies, no sessionId yet)
+    const waitingTasks = plan.tasks.filter(
+      (t) => t.dependencies.length > 0 && !t.sessionId,
+    );
+    if (waitingTasks.length === 0) return;
+
+    // Build a map of taskId → sessionId for resolved tasks
+    const taskSessionMap = new Map<string, string>();
+    for (const t of plan.tasks) {
+      if (t.sessionId) {
+        taskSessionMap.set(t.id, t.sessionId);
+      }
+    }
+
+    let changed = false;
+
+    for (const task of waitingTasks) {
+      // Check if all dependency tasks have merged sessions
+      const allDepsMerged = await Promise.all(
+        task.dependencies.map(async (depId) => {
+          const depSessionId = taskSessionMap.get(depId);
+          if (!depSessionId) return false;
+          const session = await sessionManager.get(depSessionId);
+          return session?.status === "merged";
+        }),
+      );
+
+      if (allDepsMerged.every(Boolean)) {
+        // All dependencies merged — spawn this task
+        const issueId = task.issueUrl ?? undefined;
+        try {
+          const session = await sessionManager.spawn({
+            projectId,
+            issueId,
+            prompt: issueId ? undefined : task.description,
+          });
+          task.sessionId = session.id;
+          changed = true;
+
+          // Store planId in session metadata
+          const { getSessionsDir } = await import("./paths.js");
+          const { updateMetadata } = await import("./metadata.js");
+          const sessionsDir = getSessionsDir(config.configPath, project.path);
+          updateMetadata(sessionsDir, session.id, { planId });
+        } catch (err) {
+          console.error(`Failed to spawn agent for task "${task.title}":`, err);
+        }
+      }
+    }
+
+    if (changed) {
+      plan.updatedAt = new Date().toISOString();
+      writePlan(config.configPath, project.path, plan);
+    }
+  }
+
   return {
     createPlan,
     getPlan,
     editPlan,
     approvePlan,
     listPlans: listPlanIds,
+    checkPlanCompletion,
+    spawnReadyTasks,
   };
 }

@@ -129,7 +129,7 @@ describe("createPlan", () => {
     const spawnCall = vi.mocked(sessionManager.spawn).mock.calls[0][0];
     expect(spawnCall.projectId).toBe("test-project");
     expect(spawnCall.prompt).toContain("Add dark mode");
-    expect(spawnCall.branch).toBe("main");
+    expect(spawnCall.branch).toMatch(/^plan\/plan-/);
   });
 
   it("throws for unknown project", async () => {
@@ -280,8 +280,12 @@ describe("approvePlan", () => {
     const approved = await service.approvePlan("test-project", plan.id);
 
     expect(approved.status).toBe("executing");
-    // spawn called: 1 for planning + 2 for coding agents = 3
-    expect(sessionManager.spawn).toHaveBeenCalledTimes(3);
+    // spawn called: 1 for planning + 1 for task without deps = 2
+    // (task 2 depends on task 1, so it's deferred)
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(2);
+    // Task 1 should have a sessionId, task 2 should not
+    expect(approved.tasks[0].sessionId).toBeDefined();
+    expect(approved.tasks[1].sessionId).toBeUndefined();
   });
 
   it("throws when plan is not in ready status", async () => {

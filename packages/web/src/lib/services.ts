@@ -16,6 +16,8 @@ import {
   createSessionManager,
   createPlanService,
   createDiscoveryService,
+  createReconciliationService,
+  createReviewBatchService,
   createLifecycleManager,
   createEventStore,
   type OrchestratorConfig,
@@ -23,6 +25,8 @@ import {
   type SessionManager,
   type PlanService,
   type DiscoveryService,
+  type ReconciliationService,
+  type ReviewBatchService,
   type LifecycleManager,
   type EventStore,
   type SCM,
@@ -43,6 +47,8 @@ export interface Services {
   sessionManager: SessionManager;
   planService: PlanService;
   discoveryService: DiscoveryService;
+  reconciliationService: ReconciliationService;
+  reviewBatchService: ReviewBatchService;
   lifecycleManager: LifecycleManager;
   getEventStore(projectId: string): EventStore | null;
 }
@@ -84,6 +90,8 @@ async function initServices(): Promise<Services> {
   const sessionManager = createSessionManager({ config, registry });
   const planService = createPlanService({ config, sessionManager, registry });
   const discoveryService = createDiscoveryService({ config, sessionManager, registry });
+  const reconciliationService = createReconciliationService({ config, sessionManager, registry });
+  const reviewBatchService = createReviewBatchService({ config, sessionManager, registry });
 
   // Create event stores for each project
   const eventStores = new Map<string, EventStore>();
@@ -101,6 +109,8 @@ async function initServices(): Promise<Services> {
     registry,
     sessionManager,
     eventStore: firstEventStore,
+    planService,
+    reconciliationService,
   });
   lifecycleManager.start(30_000);
 
@@ -110,6 +120,8 @@ async function initServices(): Promise<Services> {
     sessionManager,
     planService,
     discoveryService,
+    reconciliationService,
+    reviewBatchService,
     lifecycleManager,
     getEventStore(projectId: string): EventStore | null {
       return eventStores.get(projectId) ?? null;

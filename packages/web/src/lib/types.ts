@@ -24,6 +24,11 @@ export type {
   DiscoveryType,
   DiscoveryStatus,
   DiscoveryId,
+  ReviewBatch,
+  ReviewBatchItem,
+  ReviewBatchId,
+  ReviewBatchStatus,
+  ReviewItemStatus,
 } from "@composio/ao-core/types";
 
 import {
@@ -175,6 +180,17 @@ export function isPRRateLimited(pr: DashboardPR): boolean {
   return pr.mergeability.blockers.includes("API rate limited or unavailable");
 }
 
+/** A PR item from the review-prs API for the review selection UI */
+export interface PRListItem {
+  number: number;
+  title: string;
+  url: string;
+  branch: string;
+  ciStatus: string;
+  additions: number;
+  deletions: number;
+}
+
 /** Determines which attention zone a session belongs to */
 export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   // ── Done: terminal states ─────────────────────────────────────────
@@ -191,6 +207,12 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
     if (session.pr.state === "merged" || session.pr.state === "closed") {
       return "done";
     }
+  }
+
+  // ── Active agent override ─────────────────────────────────────────
+  // Agent is actively coding — don't offer merge while it's pushing commits.
+  if (session.activity === "active") {
+    return "working";
   }
 
   // ── Merge: PR is ready — one click to clear ───────────────────────

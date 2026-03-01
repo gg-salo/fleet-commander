@@ -68,8 +68,8 @@ export { generatePlanningPrompt } from "./planning-prompt.js";
 export type { PlanningPromptConfig } from "./planning-prompt.js";
 
 // Review prompt — generates prompt for PR review agent
-export { generateReviewPrompt } from "./review-prompt.js";
-export type { ReviewPromptConfig } from "./review-prompt.js";
+export { generateReviewPrompt, generateBatchReviewPrompt } from "./review-prompt.js";
+export type { ReviewPromptConfig, BatchReviewPromptConfig } from "./review-prompt.js";
 
 // Plan store — flat-file JSON CRUD for plans
 export { readPlan, writePlan, listPlans, generatePlanId, getPlansDir } from "./plan-store.js";
@@ -105,6 +105,39 @@ export {
 // Discovery service — discovery workflow orchestration
 export { createDiscoveryService } from "./discovery-service.js";
 export type { DiscoveryService, DiscoveryServiceDeps } from "./discovery-service.js";
+
+// Reconciliation prompt — generates prompt for cross-PR reconciliation agent
+export { generateReconciliationPrompt } from "./reconciliation-prompt.js";
+export type { ReconciliationPromptConfig } from "./reconciliation-prompt.js";
+
+// Reconciliation store — flat-file JSON CRUD for reconciliations
+export {
+  readReconciliation,
+  writeReconciliation,
+  listReconciliations,
+  generateReconciliationId,
+  getReconciliationsDir,
+} from "./reconciliation-store.js";
+
+// Reconciliation service — cross-PR reconciliation workflow orchestration
+export { createReconciliationService } from "./reconciliation-service.js";
+export type {
+  ReconciliationService,
+  ReconciliationServiceDeps,
+} from "./reconciliation-service.js";
+
+// Review batch store — flat-file JSON CRUD for review batches
+export {
+  readReviewBatch,
+  writeReviewBatch,
+  listReviewBatches,
+  generateReviewBatchId,
+  getReviewBatchesDir,
+} from "./review-batch-store.js";
+
+// Review batch service — batch PR review workflow orchestration
+export { createReviewBatchService } from "./review-batch-service.js";
+export type { ReviewBatchService, ReviewBatchServiceDeps } from "./review-batch-service.js";
 
 // Shared utilities
 export { shellEscape, escapeAppleScript, validateUrl, readLastJsonlEntry } from "./utils.js";

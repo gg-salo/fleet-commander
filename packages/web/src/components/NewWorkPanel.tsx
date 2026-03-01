@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Plan, PlanTask, Discovery, DiscoveryFinding } from "@/lib/types";
+import type {
+  Plan,
+  PlanTask,
+  Discovery,
+  DiscoveryFinding,
+  PRListItem,
+  ReviewBatch,
+} from "@/lib/types";
 import { DependencyGraph } from "./DependencyGraph";
 
 type PlanStep =
@@ -13,7 +20,10 @@ type PlanStep =
   | "done"
   | "discover-describe"
   | "discovering"
-  | "discover-review";
+  | "discover-review"
+  | "review-select"
+  | "review-progress"
+  | "review-results";
 
 interface NewWorkPanelProps {
   projects: Array<{ id: string; name: string }>;
@@ -25,7 +35,7 @@ type DiscoveryTypeOption = "ux-audit" | "competitor-research" | "code-health";
 export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
   const defaultProject = projects.length === 1 ? projects[0].id : "";
   const [selectedProject, setSelectedProject] = useState(defaultProject);
-  const [loading, setLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Plan state
@@ -41,7 +51,13 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
 
-  const canSubmit = useMemo(() => selectedProject !== "" && !loading, [selectedProject, loading]);
+  // Review PRs state
+  const [openPRs, setOpenPRs] = useState<PRListItem[]>([]);
+  const [selectedPRs, setSelectedPRs] = useState<Set<number>>(new Set());
+  const [reviewBatch, setReviewBatch] = useState<ReviewBatch | null>(null);
+  const [loadingPRs, setLoadingPRs] = useState(false);
+
+  const canSubmit = useMemo(() => selectedProject !== "" && loadingAction === null, [selectedProject, loadingAction]);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -52,7 +68,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
 
   const handleSetupCI = async () => {
     if (!canSubmit) return;
-    setLoading(true);
+    setLoadingAction("ci");
     setError(null);
     try {
       const res = await fetch("/api/setup-ci", {
@@ -69,13 +85,13 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to spawn CI setup session");
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
   };
 
   const handleGenerateClaudeMd = async () => {
     if (!canSubmit) return;
-    setLoading(true);
+    setLoadingAction("claude-md");
     setError(null);
     try {
       const res = await fetch("/api/generate-claudemd", {
@@ -92,7 +108,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to spawn CLAUDE.md generator");
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
   };
 
@@ -159,7 +175,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
 
   const handlePlanFeature = async () => {
     if (!canSubmit || featureDescription.trim().length === 0) return;
-    setLoading(true);
+    setLoadingAction("plan");
     setError(null);
     try {
       const res = await fetch("/api/plan", {
@@ -181,13 +197,13 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create plan");
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
   };
 
   const handleStartDiscovery = async () => {
     if (!canSubmit) return;
-    setLoading(true);
+    setLoadingAction("discover");
     setError(null);
     try {
       const res = await fetch("/api/discover", {
@@ -210,7 +226,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start discovery");
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
   };
 
@@ -225,7 +241,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
 
     // Switch to planning flow with the concatenated description
     setFeatureDescription(description);
-    setLoading(true);
+    setLoadingAction("plan-selected");
     setError(null);
 
     try {
@@ -248,8 +264,93 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create plan from findings");
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
+  };
+
+  const handleFetchOpenPRs = useCallback(async () => {
+    if (!selectedProject) return;
+    setLoadingPRs(true);
+    try {
+      const res = await fetch(`/api/review-prs?projectId=${encodeURIComponent(selectedProject)}`);
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+        throw new Error((data?.error as string) ?? `Failed (${res.status})`);
+      }
+      const data = (await res.json()) as { prs: PRListItem[] };
+      setOpenPRs(data.prs);
+      setSelectedPRs(new Set(data.prs.map((pr) => pr.number)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch open PRs");
+    } finally {
+      setLoadingPRs(false);
+    }
+  }, [selectedProject]);
+
+  const handleReviewSelected = async () => {
+    if (!canSubmit || selectedPRs.size === 0) return;
+    setLoadingAction("review-prs");
+    setError(null);
+    try {
+      const res = await fetch("/api/review-prs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: selectedProject,
+          prNumbers: Array.from(selectedPRs),
+          autoFix: true,
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+        throw new Error((data?.error as string) ?? `Failed (${res.status})`);
+      }
+      const data = (await res.json()) as { batch: ReviewBatch };
+      setReviewBatch(data.batch);
+      setPlanStep("review-progress");
+      pollReviewBatch(data.batch.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start review batch");
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const pollReviewBatch = useCallback(
+    (batchId: string) => {
+      if (pollRef.current) clearInterval(pollRef.current);
+
+      pollRef.current = setInterval(async () => {
+        try {
+          const res = await fetch(
+            `/api/review-prs/${encodeURIComponent(batchId)}?projectId=${encodeURIComponent(selectedProject)}`,
+          );
+          if (!res.ok) return;
+          const data = (await res.json()) as { batch: ReviewBatch };
+          setReviewBatch(data.batch);
+
+          if (data.batch.status === "done" || data.batch.status === "failed") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setPlanStep("review-results");
+          }
+        } catch {
+          // Ignore poll errors
+        }
+      }, 3000);
+    },
+    [selectedProject],
+  );
+
+  const togglePR = (prNumber: number) => {
+    setSelectedPRs((prev) => {
+      const next = new Set(prev);
+      if (next.has(prNumber)) {
+        next.delete(prNumber);
+      } else {
+        next.add(prNumber);
+      }
+      return next;
+    });
   };
 
   const handleRemoveTask = (taskId: string) => {
@@ -281,7 +382,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
 
   const handleApprove = async () => {
     if (!plan) return;
-    setLoading(true);
+    setLoadingAction("approve");
     setError(null);
     setPlanStep("executing");
 
@@ -319,7 +420,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
       setError(err instanceof Error ? err.message : "Failed to approve plan");
       setPlanStep("review");
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
   };
 
@@ -353,6 +454,9 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
       case "discover-describe": return "Discovery";
       case "discovering": return "Discovering...";
       case "discover-review": return "Review Findings";
+      case "review-select": return "Review PRs";
+      case "review-progress": return "Reviewing...";
+      case "review-results": return "Review Results";
     }
   };
 
@@ -415,7 +519,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-5 py-5">
           {/* Project Selector (always visible except in done/executing/discovering) */}
-          {planStep !== "done" && planStep !== "executing" && planStep !== "discovering" && (
+          {planStep !== "done" && planStep !== "executing" && planStep !== "discovering" && planStep !== "review-progress" && (
             <>
               <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
                 Project
@@ -423,7 +527,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
               <select
                 value={selectedProject}
                 onChange={(e) => setSelectedProject(e.target.value)}
-                disabled={planStep !== "select" && planStep !== "describe" && planStep !== "discover-describe"}
+                disabled={planStep !== "select" && planStep !== "describe" && planStep !== "discover-describe" && planStep !== "review-select"}
                 className="mb-6 w-full rounded-[6px] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-3 py-2 text-[13px] text-[var(--color-text-primary)] outline-none focus:border-[var(--color-accent)] disabled:opacity-60"
               >
                 {projects.length !== 1 && <option value="">Select a project...</option>}
@@ -466,7 +570,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
                     <p className="text-[11px] leading-relaxed text-[var(--color-text-secondary)]">
                       Analyze the codebase, create a GitHub Actions workflow, write baseline tests, and open a PR.
                     </p>
-                    {loading && (
+                    {loadingAction === "ci" && (
                       <div className="mt-2 flex items-center gap-2 text-[11px] text-[var(--color-accent)]">
                         {spinnerSvg}
                         Spawning session...
@@ -494,6 +598,39 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
                     </div>
                     <p className="text-[11px] leading-relaxed text-[var(--color-text-secondary)]">
                       Describe a feature, get a plan, then spawn agents to implement it.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Review section */}
+              <div>
+                <h3 className="mb-2 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
+                  Review
+                </h3>
+                <div className="space-y-3">
+                  <button
+                    onClick={() => {
+                      setPlanStep("review-select");
+                      void handleFetchOpenPRs();
+                    }}
+                    disabled={!canSubmit}
+                    className="w-full rounded-[8px] border border-[var(--color-border-default)] p-4 text-left transition-colors hover:border-[var(--color-accent-blue)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--color-border-default)]"
+                    style={{
+                      background: "linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%)",
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05)",
+                    }}
+                  >
+                    <div className="mb-1 flex items-center gap-2">
+                      <svg className="h-4 w-4 text-[var(--color-accent-blue)]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                      </svg>
+                      <span className="text-[13px] font-semibold text-[var(--color-text-primary)]">
+                        Review Open PRs
+                      </span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-[var(--color-text-secondary)]">
+                      Batch-review open PRs with AI agents. Auto-fix when changes are requested.
                     </p>
                   </button>
                 </div>
@@ -563,7 +700,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
                     <p className="text-[11px] leading-relaxed text-[var(--color-text-secondary)]">
                       Create a comprehensive CLAUDE.md for AI agents working in your codebase.
                     </p>
-                    {loading && (
+                    {loadingAction === "claude-md" && (
                       <div className="mt-2 flex items-center gap-2 text-[11px] text-[var(--color-accent)]">
                         {spinnerSvg}
                         Spawning session...
@@ -605,7 +742,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
                   disabled={!canSubmit || featureDescription.trim().length === 0}
                   className="flex-1 rounded-[6px] bg-[var(--color-accent-violet)] px-3 py-1.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {loading ? (
+                  {loadingAction === "plan" ? (
                     <span className="flex items-center justify-center gap-2">
                       {spinnerSvg}
                       Creating plan...
@@ -659,7 +796,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
                   className="flex-1 rounded-[6px] px-3 py-1.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   style={{ backgroundColor: DISCOVERY_LABELS[discoveryType].color }}
                 >
-                  {loading ? (
+                  {loadingAction === "discover" ? (
                     <span className="flex items-center justify-center gap-2">
                       {spinnerSvg}
                       Starting...
@@ -734,10 +871,10 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
                 </button>
                 <button
                   onClick={handlePlanSelected}
-                  disabled={loading || selectedFindings.size === 0}
+                  disabled={loadingAction !== null || selectedFindings.size === 0}
                   className="flex-1 rounded-[6px] bg-[var(--color-accent-violet)] px-3 py-1.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {loading ? (
+                  {loadingAction === "plan-selected" ? (
                     <span className="flex items-center justify-center gap-2">
                       {spinnerSvg}
                       Creating plan...
@@ -747,6 +884,251 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
                   )}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* ─── Step: Review Select ─── */}
+          {planStep === "review-select" && (
+            <div>
+              {loadingPRs ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <svg className="mb-4 h-6 w-6 animate-spin text-[var(--color-accent-blue)]" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <p className="text-[12px] text-[var(--color-text-muted)]">Fetching open PRs...</p>
+                </div>
+              ) : openPRs.length === 0 ? (
+                <div className="py-8 text-center">
+                  <p className="text-[13px] text-[var(--color-text-secondary)]">No open PRs found.</p>
+                  <button
+                    onClick={() => { setPlanStep("select"); setError(null); }}
+                    className="mt-3 rounded-[6px] border border-[var(--color-border-default)] px-3 py-1.5 text-[13px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  >
+                    Back
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-[11px] text-[var(--color-text-muted)]">
+                      {selectedPRs.size} of {openPRs.length} selected
+                    </span>
+                    <button
+                      onClick={() => {
+                        if (selectedPRs.size === openPRs.length) {
+                          setSelectedPRs(new Set());
+                        } else {
+                          setSelectedPRs(new Set(openPRs.map((pr) => pr.number)));
+                        }
+                      }}
+                      className="text-[11px] text-[var(--color-accent)] hover:underline"
+                    >
+                      {selectedPRs.size === openPRs.length ? "Deselect All" : "Select All"}
+                    </button>
+                  </div>
+
+                  <div className="mb-4 space-y-2">
+                    {openPRs.map((pr) => (
+                      <button
+                        key={pr.number}
+                        onClick={() => togglePR(pr.number)}
+                        className="w-full rounded-[8px] border p-3 text-left transition-colors"
+                        style={{
+                          borderColor: selectedPRs.has(pr.number) ? "var(--color-accent)" : "var(--color-border-default)",
+                          background: selectedPRs.has(pr.number)
+                            ? "linear-gradient(175deg, rgba(31,111,235,0.08) 0%, rgba(18,23,31,1) 100%)"
+                            : "linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%)",
+                        }}
+                      >
+                        <div className="flex items-start gap-2">
+                          <div
+                            className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border"
+                            style={{
+                              borderColor: selectedPRs.has(pr.number) ? "var(--color-accent)" : "var(--color-border-default)",
+                              backgroundColor: selectedPRs.has(pr.number) ? "var(--color-accent)" : "transparent",
+                            }}
+                          >
+                            {selectedPRs.has(pr.number) && (
+                              <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+                                <path d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">#{pr.number}</span>
+                              <span className="text-[12px] font-semibold text-[var(--color-text-primary)]">{pr.title}</span>
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <span
+                                className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider"
+                                style={{
+                                  color: pr.ciStatus === "passing" ? "var(--color-accent-green)" : pr.ciStatus === "failing" ? "var(--color-status-error)" : "var(--color-text-muted)",
+                                  backgroundColor: pr.ciStatus === "passing" ? "rgba(63,185,80,0.12)" : pr.ciStatus === "failing" ? "rgba(248,81,73,0.12)" : "var(--color-bg-subtle)",
+                                }}
+                              >
+                                CI: {pr.ciStatus}
+                              </span>
+                              <span className="rounded-full bg-[var(--color-bg-subtle)] px-1.5 py-0.5 text-[9px] text-[var(--color-text-muted)]">
+                                +{pr.additions} -{pr.deletions}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setPlanStep("select"); setError(null); }}
+                      className="rounded-[6px] border border-[var(--color-border-default)] px-3 py-1.5 text-[13px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={handleReviewSelected}
+                      disabled={!canSubmit || selectedPRs.size === 0}
+                      className="flex-1 rounded-[6px] bg-[var(--color-accent-blue)] px-3 py-1.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {loadingAction === "review-prs" ? (
+                        <span className="flex items-center justify-center gap-2">
+                          {spinnerSvg}
+                          Starting review...
+                        </span>
+                      ) : (
+                        `Review Selected (${selectedPRs.size})`
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ─── Step: Review Progress ─── */}
+          {planStep === "review-progress" && reviewBatch && (
+            <div>
+              <div className="mb-4 space-y-2">
+                {reviewBatch.items.map((item) => (
+                  <div
+                    key={item.prNumber}
+                    className="flex items-center gap-3 rounded-[8px] border border-[var(--color-border-default)] p-3"
+                    style={{
+                      background: "linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%)",
+                    }}
+                  >
+                    {/* Status icon */}
+                    <div className="flex h-5 w-5 shrink-0 items-center justify-center">
+                      {item.status === "reviewing" && (
+                        <svg className="h-4 w-4 animate-spin text-[var(--color-accent-blue)]" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                      )}
+                      {item.status === "approved" && (
+                        <svg className="h-4 w-4 text-[var(--color-accent-green)]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                      {item.status === "fixing" && (
+                        <svg className="h-4 w-4 animate-spin text-[var(--color-status-attention)]" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                      )}
+                      {item.status === "fix_done" && (
+                        <svg className="h-4 w-4 text-[var(--color-accent-green)]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                      {item.status === "rejected" && (
+                        <svg className="h-4 w-4 text-[var(--color-status-error)]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                      )}
+                      {item.status === "pending" && (
+                        <div className="h-3 w-3 rounded-full bg-[var(--color-text-muted)]" />
+                      )}
+                    </div>
+
+                    {/* PR info */}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12px] font-semibold text-[var(--color-text-primary)]">
+                        #{item.prNumber} {item.prTitle}
+                      </p>
+                      <p className="text-[10px] text-[var(--color-text-muted)]">
+                        {item.status === "reviewing" && "Reviewing..."}
+                        {item.status === "approved" && "Approved"}
+                        {item.status === "fixing" && "Fixing review feedback..."}
+                        {item.status === "fix_done" && "Fixes pushed"}
+                        {item.status === "rejected" && (item.error ?? "Changes requested")}
+                        {item.status === "pending" && "Queued"}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-center text-[11px] text-[var(--color-text-muted)]">
+                Polling every 3s...
+              </p>
+            </div>
+          )}
+
+          {/* ─── Step: Review Results ─── */}
+          {planStep === "review-results" && reviewBatch && (
+            <div>
+              {/* Summary counts */}
+              <div className="mb-4 flex gap-3">
+                {[
+                  { label: "Approved", count: reviewBatch.items.filter((i) => i.status === "approved").length, color: "var(--color-accent-green)" },
+                  { label: "Fixed", count: reviewBatch.items.filter((i) => i.status === "fix_done").length, color: "var(--color-status-attention)" },
+                  { label: "Rejected", count: reviewBatch.items.filter((i) => i.status === "rejected").length, color: "var(--color-status-error)" },
+                ].filter((s) => s.count > 0).map((s) => (
+                  <div
+                    key={s.label}
+                    className="flex-1 rounded-[6px] border border-[var(--color-border-subtle)] p-2 text-center"
+                    style={{ background: "var(--color-bg-surface)" }}
+                  >
+                    <p className="text-[16px] font-bold" style={{ color: s.color }}>{s.count}</p>
+                    <p className="text-[10px] text-[var(--color-text-muted)]">{s.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Per-PR links */}
+              <div className="mb-4 space-y-1.5">
+                {reviewBatch.items.map((item) => (
+                  <a
+                    key={item.prNumber}
+                    href={item.prUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-surface)] hover:text-[var(--color-text-primary)]"
+                  >
+                    <span className={
+                      item.status === "approved" ? "text-[var(--color-accent-green)]" :
+                      item.status === "fix_done" ? "text-[var(--color-status-attention)]" :
+                      "text-[var(--color-status-error)]"
+                    }>
+                      {item.status === "approved" ? "+" : item.status === "fix_done" ? "~" : "x"}
+                    </span>
+                    #{item.prNumber} {item.prTitle}
+                  </a>
+                ))}
+              </div>
+
+              <button
+                onClick={() => {
+                  onClose();
+                  window.location.reload();
+                }}
+                className="w-full rounded-[6px] bg-[var(--color-accent)] px-3 py-1.5 text-[13px] font-semibold text-white hover:opacity-90"
+              >
+                Done
+              </button>
             </div>
           )}
 
@@ -843,7 +1225,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
                 </button>
                 <button
                   onClick={handleApprove}
-                  disabled={loading || editedTasks.length === 0}
+                  disabled={loadingAction !== null || editedTasks.length === 0}
                   className="flex-1 rounded-[6px] bg-[var(--color-accent-green)] px-3 py-1.5 text-[13px] font-semibold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Create Issues & Spawn
