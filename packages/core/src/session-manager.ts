@@ -1077,7 +1077,28 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       },
     });
 
-    // 9. Update metadata — merge updates, preserving existing fields
+    // 9. Send post-restore keystrokes (e.g. accept permissions dialog)
+    const runtimeSendKeys = plugins.runtime?.sendKeys?.bind(plugins.runtime);
+    if (plugins.agent.getPostRestoreKeys && runtimeSendKeys) {
+      const keySequence = plugins.agent.getPostRestoreKeys(project);
+      if (keySequence) {
+        // Fire-and-forget: send keystrokes asynchronously so we don't block
+        // the restore response. Delays are needed for the TUI to render.
+        void (async () => {
+          for (const { keys, delay } of keySequence) {
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            try {
+              await runtimeSendKeys(handle, keys);
+            } catch {
+              // Non-fatal — dialog may not have appeared
+              break;
+            }
+          }
+        })();
+      }
+    }
+
+    // 10. Update metadata — merge updates, preserving existing fields
     const now = new Date().toISOString();
     updateMetadata(sessionsDir, sessionId, {
       status: "spawning",
@@ -1085,7 +1106,7 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
       restoredAt: now,
     });
 
-    // 10. Run postLaunchSetup (non-fatal)
+    // 11. Run postLaunchSetup (non-fatal)
     const restoredSession: Session = {
       ...session,
       status: "spawning",

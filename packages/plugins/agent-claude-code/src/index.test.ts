@@ -147,9 +147,9 @@ describe("getLaunchCommand", () => {
     expect(cmd).not.toContain("unset");
   });
 
-  it("includes --dangerously-skip-permissions when permissions=skip", () => {
+  it("includes --permission-mode bypassPermissions when permissions=skip", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "skip" }));
-    expect(cmd).toContain("--dangerously-skip-permissions");
+    expect(cmd).toContain("--permission-mode bypassPermissions");
   });
 
   it("shell-escapes model argument", () => {
@@ -177,12 +177,12 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "opus", prompt: "Hello" }),
     );
-    expect(cmd).toBe("claude --dangerously-skip-permissions --model 'opus' -p 'Hello'");
+    expect(cmd).toBe("claude --permission-mode bypassPermissions --model 'opus' -p 'Hello'");
   });
 
   it("omits optional flags when not provided", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig());
-    expect(cmd).not.toContain("--dangerously-skip-permissions");
+    expect(cmd).not.toContain("--permission-mode");
     expect(cmd).not.toContain("--model");
     expect(cmd).not.toContain("-p");
   });

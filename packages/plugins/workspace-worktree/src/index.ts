@@ -64,6 +64,13 @@ export function create(config?: Record<string, unknown>): Workspace {
 
       mkdirSync(projectWorktreeDir, { recursive: true });
 
+      // Prune stale worktree entries (e.g. from crashed sessions)
+      try {
+        await git(repoPath, "worktree", "prune");
+      } catch {
+        // Best effort
+      }
+
       // Fetch latest from remote
       try {
         await git(repoPath, "fetch", "origin", "--quiet");

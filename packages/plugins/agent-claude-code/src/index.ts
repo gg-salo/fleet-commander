@@ -589,7 +589,7 @@ function createClaudeCodeAgent(): Agent {
       const parts: string[] = ["claude"];
 
       if (config.permissions === "skip") {
-        parts.push("--dangerously-skip-permissions");
+        parts.push("--permission-mode", "bypassPermissions");
       }
 
       if (config.model) {
@@ -748,7 +748,7 @@ function createClaudeCodeAgent(): Agent {
       const parts: string[] = ["claude", "--resume", shellEscape(sessionUuid)];
 
       if (project.agentConfig?.permissions === "skip") {
-        parts.push("--dangerously-skip-permissions");
+        parts.push("--permission-mode", "bypassPermissions");
       }
 
       if (project.agentConfig?.model) {
@@ -756,6 +756,17 @@ function createClaudeCodeAgent(): Agent {
       }
 
       return parts.join(" ");
+    },
+
+    getPostRestoreKeys(project: ProjectConfig) {
+      if (project.agentConfig?.permissions !== "skip") return null;
+      // Claude Code shows a bypass-permissions confirmation dialog on --resume.
+      // Navigate to "Yes, I accept" (Down arrow) and confirm (Enter).
+      // The 5s initial delay accounts for shell startup + claude binary loading + TUI render.
+      return [
+        { keys: "Down", delay: 5000 },
+        { keys: "Enter", delay: 500 },
+      ];
     },
 
     async setupWorkspaceHooks(workspacePath: string, _config: WorkspaceHooksConfig): Promise<void> {

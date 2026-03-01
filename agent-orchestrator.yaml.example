@@ -92,10 +92,23 @@ projects:
 #     action: send-to-agent
 #     escalateAfter: 30m
 #
+#   changes-requested:
+#     auto: true
+#     action: review-gate       # send review feedback to coding agent
+#     retries: 3                # max review iterations before escalating
+#
+#   pr-updated:
+#     auto: true
+#     action: spawn-review      # re-review after coding agent pushes fixes
+#
 #   approved-and-green:
 #     auto: false              # set to true for auto-merge
 #     action: notify
 #     priority: action
+#
+#   plan-complete:
+#     auto: true
+#     action: spawn-reconciliation  # cross-PR consistency check after all plan tasks finish
 #
 #   agent-stuck:
 #     threshold: 10m

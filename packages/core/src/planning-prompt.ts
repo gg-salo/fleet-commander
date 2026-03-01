@@ -43,7 +43,17 @@ ${featureDescription}
    - Map dependencies between tasks (which must finish before others can start)
    - Order tasks so independent ones can run in parallel
 
-3. **Write structured output**
+3. **Identify affected files and constraints**
+   - For each task, list the specific files that will need changes
+   - Define constraints: which existing functions to extend (not copy), which utilities to reuse, which patterns to follow per CLAUDE.md
+   - If a constraint references a specific function or module, include the file path
+
+4. **Cross-task overlap analysis**
+   - After defining all tasks, scan for file overlaps across tasks
+   - If two tasks touch the same file, add \`sharedContext\` to both explaining how they must coordinate
+   - Rule: two tasks modifying the same file MUST have either a dependency between them or explicit \`sharedContext\` explaining the coordination strategy
+
+5. **Write structured output**
    - Write a JSON file to: \`${outputPath}\`
    - The JSON must match this exact schema:
 
@@ -59,7 +69,13 @@ ${featureDescription}
         "Criterion 2"
       ],
       "scope": "small",
-      "dependencies": []
+      "dependencies": [],
+      "affectedFiles": ["src/path/to/file.ts", "src/path/to/other.ts"],
+      "constraints": [
+        "Extend existing createFoo() in src/foo.ts with optional params — do NOT duplicate it",
+        "Use the shared parseConfig() utility from src/utils.ts"
+      ],
+      "sharedContext": null
     },
     {
       "id": "2",
@@ -67,7 +83,10 @@ ${featureDescription}
       "description": "...",
       "acceptanceCriteria": ["..."],
       "scope": "medium",
-      "dependencies": ["1"]
+      "dependencies": ["1"],
+      "affectedFiles": ["src/path/to/file.ts"],
+      "constraints": ["Follow the existing API route pattern in src/api/example/route.ts"],
+      "sharedContext": "Task 1 also modifies src/path/to/file.ts — this task adds new exports while task 1 modifies existing ones. No conflict expected."
     }
   ]
 }
@@ -78,6 +97,8 @@ ${featureDescription}
 - **DO NOT implement any code** — only analyze and plan
 - **DO NOT create branches, PRs, or issues** — only write the output JSON file
 - **DO NOT modify any existing files** — only create the output JSON
+- **Every task MUST include \`affectedFiles\`** — list specific file paths, not directories
+- **Every task SHOULD include \`constraints\`** — reference existing patterns, functions, and utilities from CLAUDE.md
 - **Each task title** should be concise and action-oriented (e.g. "Add user authentication middleware")
 - **Each task description** should include: what to do, which files to modify, which patterns to follow
 - **Acceptance criteria** should be specific and testable
