@@ -19,6 +19,10 @@ export interface ReviewPromptConfig {
   taskConstraints?: string[];
   /** Files the planning agent expected to be modified */
   taskAffectedFiles?: string[];
+  /** Original task description from the plan */
+  taskDescription?: string;
+  /** Acceptance criteria from the plan task */
+  acceptanceCriteria?: string[];
 }
 
 /**
@@ -39,6 +43,8 @@ export function generateReviewPrompt(opts: ReviewPromptConfig): string {
     codingSessionId,
     taskConstraints,
     taskAffectedFiles,
+    taskDescription,
+    acceptanceCriteria,
   } = opts;
 
   const issueSection = issueId
@@ -64,6 +70,17 @@ The following project rules must be checked during review:
 ${project.agentRules}
 `
     : "";
+
+  const taskRequirementsSection =
+    taskDescription || (acceptanceCriteria && acceptanceCriteria.length > 0)
+      ? `
+## Task Requirements
+${taskDescription ? `\n**Description**: ${taskDescription}\n` : ""}${
+          acceptanceCriteria && acceptanceCriteria.length > 0
+            ? `\n**Acceptance Criteria**:\n${acceptanceCriteria.map((c) => `- [ ] ${c}`).join("\n")}\n\nVerify each acceptance criterion is met by the PR.\n`
+            : ""
+        }`
+      : "";
 
   const constraintsSection =
     taskConstraints && taskConstraints.length > 0
@@ -117,7 +134,7 @@ Your job is to review PR #${prNumber} and post a structured GitHub review.
    - Read CLAUDE.md, README, and relevant configuration files
    - Understand the project's conventions, patterns, and architecture
    - Look at surrounding code to understand the context of changes
-${issueSection}${agentRulesSection}${constraintsSection}${affectedFilesSection}
+${issueSection}${taskRequirementsSection}${agentRulesSection}${constraintsSection}${affectedFilesSection}
 4. **Review against checklist**
 
    For each changed file, evaluate:
@@ -182,6 +199,10 @@ export interface BatchReviewPromptConfig {
   taskConstraints?: string[];
   /** Expected affected files from planning agent */
   taskAffectedFiles?: string[];
+  /** Original task description from the plan */
+  taskDescription?: string;
+  /** Acceptance criteria from the plan task */
+  acceptanceCriteria?: string[];
 }
 
 /**
@@ -204,6 +225,8 @@ export function generateBatchReviewPrompt(opts: BatchReviewPromptConfig): string
     siblingPRs,
     taskConstraints,
     taskAffectedFiles,
+    taskDescription,
+    acceptanceCriteria,
   } = opts;
 
   const claudeMdSection = claudeMdContent
@@ -225,6 +248,17 @@ ${siblingPRs.map((s) => `- PR #${s.number} "${s.title}" (branch: \`${s.branch}\`
 
 If any code in this PR duplicates functionality from another PR, flag it.
 `
+      : "";
+
+  const batchTaskRequirementsSection =
+    taskDescription || (acceptanceCriteria && acceptanceCriteria.length > 0)
+      ? `
+## Task Requirements
+${taskDescription ? `\n**Description**: ${taskDescription}\n` : ""}${
+          acceptanceCriteria && acceptanceCriteria.length > 0
+            ? `\n**Acceptance Criteria**:\n${acceptanceCriteria.map((c) => `- [ ] ${c}`).join("\n")}\n\nVerify each acceptance criterion is met by the PR.\n`
+            : ""
+        }`
       : "";
 
   const constraintsSection =
@@ -258,7 +292,7 @@ Your job is to review PR #${prNumber} and post a structured GitHub review.
 - **PR URL**: ${prUrl}
 - **PR branch**: \`${prBranch}\`
 - **Base branch**: \`${baseBranch}\`
-${claudeMdSection}${siblingSection}
+${claudeMdSection}${siblingSection}${batchTaskRequirementsSection}
 ## Steps
 
 1. **Read the PR diff**

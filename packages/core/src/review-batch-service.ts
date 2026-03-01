@@ -19,6 +19,7 @@ import {
   listReviewBatches,
 } from "./review-batch-store.js";
 import { generateBatchReviewPrompt } from "./review-prompt.js";
+import { listPlans, readPlan } from "./plan-store.js";
 import type {
   OrchestratorConfig,
   SessionManager,
@@ -132,8 +133,39 @@ export function createReviewBatchService(deps: ReviewBatchServiceDeps): ReviewBa
     // Create batch items and spawn review agents
     const items: ReviewBatchItem[] = [];
 
+    // Look up plan task context for PRs (Feature 6)
+    // Build a map from PR branch to task context
+    const branchTaskMap = new Map<
+      string,
+      { description: string; acceptanceCriteria: string[]; constraints?: string[]; affectedFiles?: string[] }
+    >();
+    try {
+      const planIds = listPlans(config.configPath, project.path);
+      for (const planId of planIds) {
+        const plan = readPlan(config.configPath, project.path, planId);
+        if (!plan || plan.status === "failed") continue;
+        for (const task of plan.tasks) {
+          if (task.issueNumber) {
+            // Match by PR number (issue → PR auto-link is common)
+            const matchingPR = selectedPRs.find((p) => p.number === task.issueNumber);
+            if (matchingPR) {
+              branchTaskMap.set(matchingPR.branch, {
+                description: task.description,
+                acceptanceCriteria: task.acceptanceCriteria,
+                constraints: task.constraints,
+                affectedFiles: task.affectedFiles,
+              });
+            }
+          }
+        }
+      }
+    } catch {
+      // Plan lookup failed — continue without task context
+    }
+
     for (const pr of selectedPRs) {
       const siblings = siblingData.filter((s) => s.number !== pr.number);
+      const taskCtx = branchTaskMap.get(pr.branch);
 
       const prompt = generateBatchReviewPrompt({
         projectId,
@@ -145,6 +177,10 @@ export function createReviewBatchService(deps: ReviewBatchServiceDeps): ReviewBa
         repo: project.repo,
         claudeMdContent,
         siblingPRs: siblings,
+        taskDescription: taskCtx?.description,
+        acceptanceCriteria: taskCtx?.acceptanceCriteria,
+        taskConstraints: taskCtx?.constraints,
+        taskAffectedFiles: taskCtx?.affectedFiles,
       });
 
       const item: ReviewBatchItem = {

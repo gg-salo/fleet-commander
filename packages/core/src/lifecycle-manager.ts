@@ -38,6 +38,8 @@ import {
 import { updateMetadata } from "./metadata.js";
 import { getSessionsDir } from "./paths.js";
 import { generateReviewPrompt } from "./review-prompt.js";
+import { formatClassifiedErrors } from "./error-classifier.js";
+import { readPlan } from "./plan-store.js";
 
 /** Parse a duration string like "10m", "30s", "1h" to milliseconds. */
 function parseDuration(str: string): number {
@@ -176,6 +178,12 @@ export interface LifecycleManagerDeps {
   reconciliationService?: {
     create(projectId: string, planId: string): Promise<unknown>;
   };
+  outcomeService?: {
+    captureOutcome(session: Session): void;
+  };
+  retrospectiveService?: {
+    analyze(sessionId: string): Promise<void>;
+  };
 }
 
 /** Track attempt counts for reactions per session. */
@@ -184,9 +192,45 @@ interface ReactionTracker {
   firstTriggered: Date;
 }
 
+/**
+ * Conservative keyword matching to detect if an agent is already
+ * working on the issue a reaction would notify about.
+ * Returns false by default (fail-open — better to send duplicate than miss).
+ */
+function checkAgentAwareness(reactionKey: string, terminalOutput: string): boolean {
+  const lower = terminalOutput.toLowerCase();
+  switch (reactionKey) {
+    case "ci-failed":
+      return (
+        lower.includes("ci fail") ||
+        lower.includes("fixing ci") ||
+        lower.includes("lint error") ||
+        lower.includes("test fail") ||
+        lower.includes("build fail")
+      );
+    case "changes-requested":
+      return (
+        lower.includes("review feedback") ||
+        lower.includes("address comment") ||
+        lower.includes("changes requested")
+      );
+    default:
+      return false;
+  }
+}
+
 /** Create a LifecycleManager instance. */
 export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleManager {
-  const { config, registry, sessionManager, eventStore, planService, reconciliationService } = deps;
+  const {
+    config,
+    registry,
+    sessionManager,
+    eventStore,
+    planService,
+    reconciliationService,
+    outcomeService,
+    retrospectiveService,
+  } = deps;
 
   const states = new Map<SessionId, SessionStatus>();
   const reactionTrackers = new Map<string, ReactionTracker>(); // "sessionId:reactionKey"
@@ -315,7 +359,14 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     let tracker = reactionTrackers.get(trackerKey);
 
     if (!tracker) {
-      tracker = { attempts: 0, firstTriggered: new Date() };
+      // Restore from session metadata if available (Feature 3d)
+      const session = await sessionManager.get(sessionId);
+      const savedAttempts = session?.metadata[`reaction_${reactionKey}_attempts`];
+      const savedFirstTriggered = session?.metadata[`reaction_${reactionKey}_firstTriggered`];
+      tracker = {
+        attempts: savedAttempts ? parseInt(savedAttempts, 10) : 0,
+        firstTriggered: savedFirstTriggered ? new Date(savedFirstTriggered) : new Date(),
+      };
       reactionTrackers.set(trackerKey, tracker);
     }
 
@@ -366,6 +417,56 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     switch (action) {
       case "send-to-agent": {
         if (reactionConfig.message) {
+          // Reaction deduplication (Feature 2):
+          // Check if the agent is already aware of and working on this issue
+          try {
+            const dedupSession = await sessionManager.get(sessionId);
+            if (dedupSession) {
+              const project = config.projects[dedupSession.projectId];
+              const agentName =
+                dedupSession.metadata["agent"] ??
+                project?.agent ??
+                config.defaults.agent;
+              const agent = registry.get<Agent>("agent", agentName);
+              const runtime = project
+                ? registry.get<Runtime>(
+                    "runtime",
+                    project.runtime ?? config.defaults.runtime,
+                  )
+                : null;
+
+              if (agent && runtime && dedupSession.runtimeHandle) {
+                const activityState = await agent.getActivityState(dedupSession);
+                if (activityState?.state === "active") {
+                  const recentOutput = await runtime.getOutput(
+                    dedupSession.runtimeHandle,
+                    30,
+                  );
+                  if (checkAgentAwareness(reactionKey, recentOutput)) {
+                    // Agent is already working on this — skip the send
+                    eventStore?.append(
+                      createEvent("reaction.triggered", {
+                        sessionId,
+                        projectId,
+                        message: `Reaction '${reactionKey}' skipped — agent already aware`,
+                        data: { reactionKey, skipped: true, reason: "agent-aware" },
+                      }),
+                    );
+                    return {
+                      reactionType: reactionKey,
+                      success: true,
+                      action: "send-to-agent",
+                      message: "Skipped — agent already aware",
+                      escalated: false,
+                    };
+                  }
+                }
+              }
+            }
+          } catch {
+            // Dedup check failed — proceed with send (fail-open)
+          }
+
           try {
             let enrichedMessage = reactionConfig.message;
 
@@ -420,11 +521,58 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
                     }
 
                     if (failingChecks.length > 0) {
-                      const checksSection = failingChecks
-                        .map((c) => `- ${c.name} (FAILURE)${c.url ? ` — [View](${c.url})` : ""}`)
-                        .join("\n");
+                      // Use classified error formatting
+                      const classifiedSection = formatClassifiedErrors(
+                        failingChecks.map((c) => ({ name: c.name, url: c.url })),
+                      );
 
-                      enrichedMessage = `# CI Failed on PR #${session.pr.number}\n\n## Failing Checks\n${checksSection}\n${prSize}${siblingNote}\n## Instructions\n${reactionConfig.message}`;
+                      // Attempt-aware messaging (Feature 3)
+                      let attemptNote = "";
+                      if (tracker.attempts > 1 && eventStore) {
+                        const currentCheckNames = new Set(failingChecks.map((c) => c.name));
+                        const prevCiEvents = eventStore.query({
+                          sessionId,
+                          types: ["ci.fix_sent"],
+                          limit: 1,
+                        });
+                        if (prevCiEvents.length > 0) {
+                          const prevChecks = prevCiEvents[0].data["failingChecks"];
+                          if (Array.isArray(prevChecks)) {
+                            const prevCheckNames = new Set(prevChecks.filter((c): c is string => typeof c === "string"));
+                            const stillFailing = [...currentCheckNames].filter((c) => prevCheckNames.has(c));
+                            const nowPassing = [...prevCheckNames].filter((c) => !currentCheckNames.has(c));
+                            const newFailures = [...currentCheckNames].filter((c) => !prevCheckNames.has(c));
+
+                            const notes: string[] = [];
+                            if (stillFailing.length > 0) {
+                              notes.push(`Your previous fix did NOT resolve: ${stillFailing.join(", ")}. Try a fundamentally different approach.`);
+                            }
+                            if (nowPassing.length > 0) {
+                              notes.push(`Previously failing now passing: ${nowPassing.join(", ")}. Good progress.`);
+                            }
+                            if (newFailures.length > 0) {
+                              notes.push(`New failures introduced: ${newFailures.join(", ")}. Your fix may have caused a regression.`);
+                            }
+                            if (notes.length > 0) {
+                              attemptNote = `\n## Attempt ${tracker.attempts} Analysis\n${notes.join("\n")}\n`;
+                            }
+                          }
+                        }
+                      }
+
+                      // Store failing check names in ci.failing event data
+                      const ciEvent = createEvent("ci.failing", {
+                        sessionId,
+                        projectId,
+                        message: `CI failing: ${failingChecks.map((c) => c.name).join(", ")}`,
+                        data: {
+                          failingChecks: failingChecks.map((c) => c.name),
+                          attempt: tracker.attempts,
+                        },
+                      });
+                      eventStore?.append(ciEvent);
+
+                      enrichedMessage = `# CI Failed on PR #${session.pr.number}\n\n## Failing Checks\n${classifiedSection}\n${prSize}${attemptNote}${siblingNote}\n## Instructions\n${reactionConfig.message}`;
                     }
                   } catch {
                     // Fall back to static message
@@ -434,6 +582,54 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             }
 
             await sessionManager.send(sessionId, enrichedMessage);
+
+            // Emit ci.fix_sent event to track what was sent (Feature 3)
+            if (reactionKey === "ci-failed" && eventStore) {
+              const session = await sessionManager.get(sessionId);
+              if (session?.pr) {
+                const project = config.projects[session.projectId];
+                const scm = project?.scm
+                  ? registry.get<SCM>("scm", project.scm.plugin)
+                  : null;
+                if (scm) {
+                  try {
+                    const checks = await scm.getCIChecks(session.pr);
+                    const failingCheckNames = checks
+                      .filter((c) => c.status === "failed")
+                      .map((c) => c.name);
+
+                    eventStore.append(
+                      createEvent("ci.fix_sent", {
+                        sessionId,
+                        projectId,
+                        message: `CI fix sent to ${sessionId} (attempt ${tracker.attempts})`,
+                        data: {
+                          attempt: tracker.attempts,
+                          failingChecks: failingCheckNames,
+                        },
+                      }),
+                    );
+                  } catch {
+                    // ignore
+                  }
+                }
+              }
+            }
+
+            // Persist reaction tracker to metadata (Feature 3d)
+            {
+              const session = await sessionManager.get(sessionId);
+              if (session) {
+                const project = config.projects[session.projectId];
+                if (project) {
+                  const sessionsDir = getSessionsDir(config.configPath, project.path);
+                  updateMetadata(sessionsDir, sessionId, {
+                    [`reaction_${reactionKey}_attempts`]: String(tracker.attempts),
+                    [`reaction_${reactionKey}_firstTriggered`]: tracker.firstTriggered.toISOString(),
+                  });
+                }
+              }
+            }
 
             return {
               reactionType: reactionKey,
@@ -514,6 +710,35 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
         }
 
         try {
+          // Look up task context from plan (Feature 6)
+          let taskDescription: string | undefined;
+          let acceptanceCriteria: string[] | undefined;
+          let taskConstraints: string[] | undefined;
+          let taskAffectedFiles: string[] | undefined;
+          const planIdMeta = session.metadata["planId"];
+          if (planIdMeta) {
+            try {
+              const plan = readPlan(config.configPath, project.path, planIdMeta);
+              if (plan) {
+                // Find task by matching issueId
+                const issueNum = session.issueId
+                  ? parseInt(session.issueId.replace(/\D/g, ""), 10)
+                  : undefined;
+                const task = plan.tasks.find((t) =>
+                  t.issueNumber === issueNum || t.sessionId === sessionId,
+                );
+                if (task) {
+                  taskDescription = task.description;
+                  acceptanceCriteria = task.acceptanceCriteria;
+                  taskConstraints = task.constraints;
+                  taskAffectedFiles = task.affectedFiles;
+                }
+              }
+            } catch {
+              // Plan lookup failed — continue without task context
+            }
+          }
+
           const reviewPrompt = generateReviewPrompt({
             projectId,
             project,
@@ -524,6 +749,10 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
             repo: project.repo,
             issueId: session.issueId ?? undefined,
             codingSessionId: sessionId,
+            taskDescription,
+            acceptanceCriteria,
+            taskConstraints,
+            taskAffectedFiles,
           });
 
           await sessionManager.spawn({
@@ -769,6 +998,31 @@ Please address all review feedback above, then push your fixes. The review agent
         updateMetadata(sessionsDir, session.id, { status: newStatus });
       }
 
+      // Reaction success tracking (Feature 7):
+      // When transitioning from ci_failed, track whether the fix resolved the issue
+      if (oldStatus === "ci_failed" && eventStore) {
+        const ciTracker = reactionTrackers.get(`${session.id}:ci-failed`);
+        if (ciTracker && ciTracker.attempts > 0) {
+          const resolved =
+            newStatus === "pr_open" ||
+            newStatus === "review_pending" ||
+            newStatus === "approved" ||
+            newStatus === "mergeable";
+          eventStore.append(
+            createEvent(resolved ? "ci.passing" : "ci.fix_failed", {
+              sessionId: session.id,
+              projectId: session.projectId,
+              message: `CI fix ${resolved ? "resolved" : "failed"} after ${ciTracker.attempts} attempt(s)`,
+              data: {
+                resolved,
+                attempt: ciTracker.attempts,
+                newStatus,
+              },
+            }),
+          );
+        }
+      }
+
       // Reset allCompleteEmitted when any session becomes active again
       if (newStatus !== "merged" && newStatus !== "killed") {
         allCompleteEmitted = false;
@@ -925,6 +1179,38 @@ Then force-push your branch. This ensures CI runs against the latest code.`;
           }
         } catch {
           // Plan completion check failed — will retry next poll
+        }
+      }
+
+      // Outcome capture: record structured metrics when session reaches terminal state
+      if (TERMINAL_STATUSES.has(newStatus) && outcomeService) {
+        try {
+          outcomeService.captureOutcome(session);
+        } catch {
+          // Non-fatal — don't block lifecycle
+        }
+      }
+
+      // Retrospective: spawn analysis agent on non-merged terminal sessions
+      if (
+        retrospectiveService &&
+        TERMINAL_STATUSES.has(newStatus) &&
+        newStatus !== "merged"
+      ) {
+        const retroReactionKey = "session-failed";
+        const retroProject = config.projects[session.projectId];
+        const retroGlobal = config.reactions[retroReactionKey];
+        const retroProjectReaction = retroProject?.reactions?.[retroReactionKey];
+        const retroConfig = retroProjectReaction
+          ? { ...retroGlobal, ...retroProjectReaction }
+          : retroGlobal;
+
+        if (retroConfig?.action === "spawn-retrospective" && retroConfig.auto !== false) {
+          try {
+            await retrospectiveService.analyze(session.id);
+          } catch {
+            // Non-fatal
+          }
         }
       }
     } else {

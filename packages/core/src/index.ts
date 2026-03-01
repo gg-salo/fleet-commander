@@ -53,7 +53,11 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 
 // Prompt builder — layered prompt composition
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
-export type { PromptBuildConfig } from "./prompt-builder.js";
+export type {
+  PromptBuildConfig,
+  SiblingSessionContext,
+  DependencyDiffContext,
+} from "./prompt-builder.js";
 
 // Orchestrator prompt — generates orchestrator context for `ao start`
 export { generateOrchestratorPrompt } from "./orchestrator-prompt.js";
@@ -76,6 +80,44 @@ export { readPlan, writePlan, listPlans, generatePlanId, getPlansDir } from "./p
 
 // Event store — JSONL-backed persistent event storage
 export { createEventStore } from "./event-store.js";
+
+// Outcome store — JSONL-backed session outcome records
+export { appendOutcome, readOutcomes, getOutcomesFilePath } from "./outcome-store.js";
+
+// Outcome service — captures structured metrics on session completion
+export { createOutcomeService } from "./outcome-service.js";
+export type { OutcomeService, OutcomeServiceDeps } from "./outcome-service.js";
+
+// Context enrichment — gathers contextual data for agent prompts
+export {
+  readClaudeMd,
+  gatherSiblingContext,
+  gatherDependencyDiffs,
+  getProjectLessons,
+} from "./context-enrichment.js";
+
+// Error classifier — categorize CI failures with actionable recommendations
+export {
+  classifyError,
+  classifyAndGroupErrors,
+  formatClassifiedErrors,
+} from "./error-classifier.js";
+export type { ErrorCategory, ErrorClassification } from "./error-classifier.js";
+
+// Reaction analytics — effectiveness metrics for CI fix reactions
+export { getReactionEffectiveness } from "./reaction-analytics.js";
+export type { ReactionEffectiveness } from "./reaction-analytics.js";
+
+// Retrospective prompt — analysis prompt for failed sessions
+export { generateRetrospectivePrompt } from "./retrospective-prompt.js";
+export type { RetrospectivePromptConfig } from "./retrospective-prompt.js";
+
+// Retrospective service — spawns analysis agents for failed sessions
+export { createRetrospectiveService } from "./retrospective-service.js";
+export type {
+  RetrospectiveService,
+  RetrospectiveServiceDeps,
+} from "./retrospective-service.js";
 
 // Plan service — planning workflow orchestration
 export { createPlanService } from "./plan-service.js";

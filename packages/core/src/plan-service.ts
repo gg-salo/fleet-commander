@@ -12,6 +12,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getPlansDir, readPlan, writePlan, generatePlanId, listPlans } from "./plan-store.js";
 import { generatePlanningPrompt } from "./planning-prompt.js";
+import { buildPrompt } from "./prompt-builder.js";
+import {
+  readClaudeMd,
+  gatherSiblingContext,
+  gatherDependencyDiffs,
+  getProjectLessons,
+} from "./context-enrichment.js";
 import {
   TERMINAL_STATUSES,
   type OrchestratorConfig,
@@ -274,6 +281,10 @@ export function createPlanService(deps: PlanServiceDeps): PlanService {
     plan.updatedAt = new Date().toISOString();
     writePlan(config.configPath, project.path, plan);
 
+    // Gather enrichment data once before spawning
+    const claudeMdContent = readClaudeMd(project.path);
+    const projectLessons = getProjectLessons(config.configPath, project.path);
+
     // Spawn coding agents for tasks with no unresolved dependencies.
     // Tasks with dependencies remain pending (no sessionId) until
     // their dependencies merge, at which point spawnReadyTasks() spawns them.
@@ -287,10 +298,20 @@ export function createPlanService(deps: PlanServiceDeps): PlanService {
       const issueId = task.issueUrl ?? undefined;
 
       try {
+        // Build enriched prompt via prompt builder
+        const enrichedPrompt = buildPrompt({
+          project,
+          projectId,
+          issueId,
+          userPrompt: issueId ? undefined : task.description,
+          claudeMdContent,
+          projectLessons,
+        });
+
         const session = await sessionManager.spawn({
           projectId,
           issueId,
-          prompt: issueId ? undefined : task.description,
+          prompt: enrichedPrompt ?? (issueId ? undefined : task.description),
         });
         task.sessionId = session.id;
 
@@ -377,10 +398,35 @@ export function createPlanService(deps: PlanServiceDeps): PlanService {
         // All dependencies merged — spawn this task
         const issueId = task.issueUrl ?? undefined;
         try {
+          // Gather enrichment data
+          const claudeMdContent = readClaudeMd(project.path);
+          const projectLessons = getProjectLessons(config.configPath, project.path);
+          const siblingContext = await gatherSiblingContext(
+            sessionManager,
+            projectId,
+            planId,
+          );
+          const dependencyDiffs = await gatherDependencyDiffs(
+            project.repo,
+            plan,
+            task,
+          );
+
+          const enrichedPrompt = buildPrompt({
+            project,
+            projectId,
+            issueId,
+            userPrompt: issueId ? undefined : task.description,
+            claudeMdContent,
+            projectLessons,
+            siblingContext,
+            dependencyDiffs,
+          });
+
           const session = await sessionManager.spawn({
             projectId,
             issueId,
-            prompt: issueId ? undefined : task.description,
+            prompt: enrichedPrompt ?? (issueId ? undefined : task.description),
           });
           task.sessionId = session.id;
           changed = true;

@@ -43,6 +43,20 @@ export const BASE_AGENT_PROMPT = `You are an AI coding agent managed by the Agen
 // TYPES
 // =============================================================================
 
+export interface SiblingSessionContext {
+  sessionId: string;
+  branch: string;
+  summary: string | null;
+  issueId: string | null;
+  affectedFiles?: string[];
+}
+
+export interface DependencyDiffContext {
+  taskTitle: string;
+  prNumber: number;
+  diffStat: string;
+}
+
 export interface PromptBuildConfig {
   /** The project config from the orchestrator config */
   project: ProjectConfig;
@@ -58,6 +72,20 @@ export interface PromptBuildConfig {
 
   /** Explicit user prompt (appended last) */
   userPrompt?: string;
+
+  // --- Layer 4: Context enrichment ---
+
+  /** Inlined CLAUDE.md content (truncated) */
+  claudeMdContent?: string;
+
+  /** Active sibling sessions in the same plan */
+  siblingContext?: SiblingSessionContext[];
+
+  /** Diff stats from recently merged dependency PRs */
+  dependencyDiffs?: DependencyDiffContext[];
+
+  /** Lessons derived from historical session outcomes */
+  projectLessons?: string;
 }
 
 // =============================================================================
@@ -150,9 +178,14 @@ export function buildPrompt(config: PromptBuildConfig): string | null {
   const userRules = readUserRules(config.project);
   const hasRules = Boolean(userRules);
   const hasUserPrompt = Boolean(config.userPrompt);
+  const hasEnrichment =
+    Boolean(config.claudeMdContent) ||
+    (config.siblingContext && config.siblingContext.length > 0) ||
+    (config.dependencyDiffs && config.dependencyDiffs.length > 0) ||
+    Boolean(config.projectLessons);
 
   // Nothing to compose — return null for backward compatibility
-  if (!hasIssue && !hasRules && !hasUserPrompt) {
+  if (!hasIssue && !hasRules && !hasUserPrompt && !hasEnrichment) {
     return null;
   }
 
@@ -167,6 +200,36 @@ export function buildPrompt(config: PromptBuildConfig): string | null {
   // Layer 3: User rules
   if (userRules) {
     sections.push(`## Project Rules\n${userRules}`);
+  }
+
+  // Layer 4: Context enrichment
+  if (config.claudeMdContent) {
+    sections.push(`## Project Conventions (CLAUDE.md)\n${config.claudeMdContent}`);
+  }
+
+  if (config.siblingContext && config.siblingContext.length > 0) {
+    const siblingLines = config.siblingContext.map((s) => {
+      const files = s.affectedFiles?.length
+        ? ` — files: ${s.affectedFiles.join(", ")}`
+        : "";
+      return `- ${s.sessionId} (${s.branch}): ${s.summary ?? "no summary"}${files}`;
+    });
+    sections.push(
+      `## Active Sibling Sessions\n${siblingLines.join("\n")}\nAvoid modifying files other agents are working on.`,
+    );
+  }
+
+  if (config.dependencyDiffs && config.dependencyDiffs.length > 0) {
+    const diffLines = config.dependencyDiffs.map(
+      (d) => `- ${d.taskTitle} (PR #${d.prNumber}):\n${d.diffStat}`,
+    );
+    sections.push(
+      `## Recently Merged Dependencies\n${diffLines.join("\n")}\nRebase to incorporate.`,
+    );
+  }
+
+  if (config.projectLessons) {
+    sections.push(`## Lessons from Previous Sessions\n${config.projectLessons}`);
   }
 
   // Explicit user prompt (appended last, highest priority)

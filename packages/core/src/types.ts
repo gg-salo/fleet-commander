@@ -790,6 +790,27 @@ export interface EventStore {
 }
 
 // =============================================================================
+// SESSION OUTCOMES
+// =============================================================================
+
+/** Structured outcome record captured when a session reaches terminal state. */
+export interface SessionOutcome {
+  sessionId: string;
+  projectId: string;
+  planId?: string;
+  taskId?: string;
+  outcome: "merged" | "killed" | "stuck" | "errored";
+  durationMs: number;
+  ciRetries: number;
+  reviewRounds: number;
+  cost?: CostEstimate;
+  filesChanged?: number;
+  errorCategories?: string[];
+  failingChecks?: string[];
+  timestamp: string;
+}
+
+// =============================================================================
 // REACTIONS
 // =============================================================================
 
@@ -805,7 +826,8 @@ export interface ReactionConfig {
     | "auto-merge"
     | "spawn-review"
     | "review-gate"
-    | "spawn-reconciliation";
+    | "spawn-reconciliation"
+    | "spawn-retrospective";
 
   /** Message to send (for send-to-agent) */
   message?: string;
