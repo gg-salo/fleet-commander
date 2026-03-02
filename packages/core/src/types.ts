@@ -60,11 +60,19 @@ export const ACTIVITY_STATE = {
   EXITED: "exited" as const,
 } satisfies Record<string, ActivityState>;
 
+/** What the agent is currently doing — extracted from tool use events. */
+export interface ActivityDetail {
+  label: string; // e.g. "Editing src/lib/types.ts"
+  timestamp: Date;
+}
+
 /** Result of activity detection, carrying both the state and an optional timestamp. */
 export interface ActivityDetection {
   state: ActivityState;
   /** When activity was last observed (e.g., agent log file mtime) */
   timestamp?: Date;
+  /** What the agent is currently doing (extracted from recent tool use). */
+  activityDetail?: ActivityDetail;
 }
 
 /** Default threshold (ms) before a "ready" session becomes "idle". */
@@ -117,12 +125,28 @@ export function isTerminalSession(session: {
   );
 }
 
+/** Check if a non-terminal session is a zombie (process gone or stale idle). */
+export function isZombie(session: {
+  status: SessionStatus;
+  activity: ActivityState | null;
+  lastActivityAt: Date;
+}): boolean {
+  if (TERMINAL_STATUSES.has(session.status)) return false;
+  if (session.activity === "exited") return true;
+  if (session.activity === "idle") {
+    return Date.now() - session.lastActivityAt.getTime() > 10 * 60_000;
+  }
+  return false;
+}
+
 /** Check if a session can be restored. */
 export function isRestorable(session: {
   status: SessionStatus;
   activity: ActivityState | null;
+  lastActivityAt: Date;
 }): boolean {
-  return isTerminalSession(session) && !NON_RESTORABLE_STATUSES.has(session.status);
+  if (NON_RESTORABLE_STATUSES.has(session.status)) return false;
+  return isTerminalSession(session) || isZombie(session);
 }
 
 /** A running agent session */
@@ -165,6 +189,9 @@ export interface Session {
 
   /** When this session was last restored (undefined if never restored) */
   restoredAt?: Date;
+
+  /** What the agent is currently doing (e.g. "Editing src/lib/types.ts") */
+  activityDetail?: { label: string; timestamp: string };
 
   /** Metadata key-value pairs */
   metadata: Record<string, string>;

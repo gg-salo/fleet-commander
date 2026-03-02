@@ -294,6 +294,12 @@ export function createSessionManager(deps: SessionManagerDeps): SessionManager {
           if (detected.timestamp && detected.timestamp > session.lastActivityAt) {
             session.lastActivityAt = detected.timestamp;
           }
+          if (detected.activityDetail) {
+            session.activityDetail = {
+              label: detected.activityDetail.label,
+              timestamp: detected.activityDetail.timestamp.toISOString(),
+            };
+          }
         }
       } catch {
         // Can't detect activity — keep existing value

@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
+import { predictConflicts } from "@composio/ao-core";
 
 const PLAN_ID_PATTERN = /^plan-[a-zA-Z0-9_-]+$/;
 
@@ -38,7 +39,12 @@ export async function GET(
       return NextResponse.json({ error: "Plan not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ plan });
+    // Include file conflict prediction when plan is ready for review
+    const conflictReport = plan.status === "ready" || plan.status === "approved"
+      ? predictConflicts(plan.tasks)
+      : undefined;
+
+    return NextResponse.json({ plan, conflicts: conflictReport });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to get plan" },

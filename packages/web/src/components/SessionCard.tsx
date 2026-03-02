@@ -64,12 +64,18 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
     TERMINAL_STATUSES.has(session.status) ||
     (session.activity !== null && TERMINAL_ACTIVITIES.has(session.activity));
   const isLikelyZombie =
-    !isTerminal &&
-    session.activity === "idle" &&
-    Date.now() - new Date(session.lastActivityAt).getTime() > 10 * 60 * 1000;
+    !isTerminal && (
+      session.activity === "exited" ||
+      (session.activity === "idle" &&
+        Date.now() - new Date(session.lastActivityAt).getTime() > 10 * 60 * 1000)
+    );
   const isRestorable = (isTerminal && session.status !== "merged") || isLikelyZombie;
 
   const title = getSessionTitle(session);
+
+  // Split alerts: highest-priority actionable → primary, rest → secondary badges
+  const primaryAlert = alerts.find((a) => a.actionLabel);
+  const secondaryAlerts = alerts.filter((a) => a !== primaryAlert);
 
   return (
     <div
@@ -94,54 +100,34 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
         setExpanded(!expanded);
       }}
     >
-      {/* Header row: session ID + buttons */}
-      <div className="flex items-center gap-2 px-4 pt-4 pb-1">
-        <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
-          {session.id}
-        </span>
-        <div className="flex-1" />
-        {isRestorable && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onRestore?.(session.id); }}
-            className="rounded border border-[rgba(88,166,255,0.35)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
-          >
-            {isLikelyZombie ? "restart" : "restore"}
-          </button>
-        )}
-        {!isTerminal && (
-          <a
-            href={`/sessions/${encodeURIComponent(session.id)}`}
-            onClick={(e) => e.stopPropagation()}
-            className="rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
-          >
-            terminal
-          </a>
-        )}
-      </div>
-
-      {/* Activity status line: dot + label + relative time */}
-      <div className="flex items-center gap-1.5 px-4 pb-2">
-        <ActivityDot activity={session.activity} dotOnly size={6} />
-        <span className="text-[11px] font-medium" style={{ color: activityTextColor(session.activity) }}>
-          {activityLabel(session.activity, session.status)}
-        </span>
-        <span className="text-[9px] text-[var(--color-border-strong)]">&middot;</span>
-        <span className="text-[11px] text-[var(--color-text-tertiary)]">
-          {relativeTime(session.lastActivityAt)}
-        </span>
-      </div>
-
-      {/* Title — its own row, bigger, can wrap */}
-      <div className="px-4 pb-3">
+      {/* Title — primary card identifier */}
+      <div className="px-4 pt-3.5 pb-1">
         <p className={cn(
-          "leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:3] overflow-hidden",
+          "leading-snug [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden",
           level === "working"
             ? "text-[13px] font-medium text-[var(--color-text-secondary)]"
-            : "text-[14px] font-semibold text-[var(--color-text-primary)]",
+            : "text-[13px] font-semibold text-[var(--color-text-primary)]",
           session.summaryIsFallback && !session.pr?.title && "italic opacity-60",
         )}>
           {title}
         </p>
+      </div>
+
+      {/* Activity status line: dot + label + activity detail + relative time */}
+      <div className="flex items-center gap-1.5 px-4 pb-2.5">
+        <ActivityDot activity={session.activity} dotOnly size={6} />
+        <span className="text-[11px] font-medium" style={{ color: activityTextColor(session.activity) }}>
+          {activityLabel(session.activity, session.status)}
+        </span>
+        {session.activityDetail && session.activity === "active" && (
+          <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-muted)] truncate max-w-[120px]">
+            {session.activityDetail}
+          </span>
+        )}
+        <span className="text-[9px] text-[var(--color-border-strong)]">&middot;</span>
+        <span className="text-[11px] text-[var(--color-text-tertiary)]">
+          {relativeTime(session.lastActivityAt)}
+        </span>
       </div>
 
       {/* Meta row: branch + PR pills */}
@@ -170,9 +156,10 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
         </div>
       )}
 
-      {/* Merge button and/or alert tags */}
-      {!rateLimited && (alerts.length > 0 || isReadyToMerge) && (
-        <div className="px-4 pb-3.5 pt-0.5 space-y-2">
+      {/* Primary action + secondary alert badges */}
+      {!rateLimited && (primaryAlert || isReadyToMerge || secondaryAlerts.length > 0) && (
+        <div className="px-4 pb-3 pt-0.5 space-y-2">
+          {/* Merge button */}
           {isReadyToMerge && pr && (
             <button
               onClick={(e) => { e.stopPropagation(); onMerge?.(pr.number); }}
@@ -184,48 +171,85 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
               Merge PR #{pr.number}
             </button>
           )}
-          {alerts.length > 0 && (
+
+          {/* Primary actionable alert (full button) */}
+          {primaryAlert && session.activity !== "active" && (
+            <span className="inline-flex items-center gap-1">
+              <a
+                href={primaryAlert.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-medium hover:brightness-125 hover:no-underline",
+                  primaryAlert.className,
+                )}
+              >
+                {primaryAlert.count !== undefined && <span className="font-bold">{primaryAlert.count}</span>}
+                {primaryAlert.label}
+              </a>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleAction(primaryAlert.key, primaryAlert.actionMessage ?? ""); }}
+                disabled={sendingAction !== null && sendingAction.endsWith(primaryAlert.key)}
+                className="rounded border border-[rgba(88,166,255,0.25)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)] disabled:opacity-50"
+              >
+                {sendingAction === `restoring:${primaryAlert.key}`
+                  ? "restoring…"
+                  : sendingAction === `done:${primaryAlert.key}`
+                    ? "sent!"
+                    : isTerminal
+                      ? primaryAlert.actionLabel?.replace("ask to", "respawn &")
+                      : primaryAlert.actionLabel}
+              </button>
+            </span>
+          )}
+
+          {/* Secondary alerts (compact badges) */}
+          {secondaryAlerts.length > 0 && (
             <div className="flex flex-wrap gap-1">
-              {alerts.map((alert) => (
-                <span key={alert.key} className="inline-flex items-center gap-1">
-                  <a
-                    href={alert.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-medium hover:brightness-125 hover:no-underline",
-                      alert.className,
-                    )}
-                  >
-                    {alert.count !== undefined && <span className="font-bold">{alert.count}</span>}
-                    {alert.label}
-                  </a>
-                  {alert.actionLabel && session.activity !== "active" && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleAction(alert.key, alert.actionMessage ?? ""); }}
-                      disabled={sendingAction !== null && sendingAction.endsWith(alert.key)}
-                      className="rounded border border-[rgba(88,166,255,0.25)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)] disabled:opacity-50"
-                    >
-                      {sendingAction === `restoring:${alert.key}`
-                        ? "restoring…"
-                        : sendingAction === `done:${alert.key}`
-                          ? "sent!"
-                          : isTerminal
-                            ? alert.actionLabel.replace("ask to", "respawn &")
-                            : alert.actionLabel}
-                    </button>
+              {secondaryAlerts.map((alert) => (
+                <a
+                  key={alert.key}
+                  href={alert.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-medium hover:brightness-125 hover:no-underline",
+                    alert.className,
                   )}
-                </span>
+                >
+                  {alert.count !== undefined && <span className="font-bold">{alert.count}</span>}
+                  {alert.label}
+                </a>
               ))}
             </div>
           )}
         </div>
       )}
 
+      {/* Restore button for zombies/terminals */}
+      {isRestorable && !expanded && (
+        <div className="px-4 pb-3">
+          <button
+            onClick={(e) => { e.stopPropagation(); onRestore?.(session.id); }}
+            className="rounded border border-[rgba(88,166,255,0.35)] px-2 py-0.5 text-[11px] text-[var(--color-accent)] transition-colors hover:bg-[rgba(88,166,255,0.1)]"
+          >
+            {isLikelyZombie ? "restart" : "restore"}
+          </button>
+        </div>
+      )}
+
       {/* Expandable detail panel */}
       {expanded && (
         <div className="border-t border-[var(--color-border-subtle)] px-4 py-3.5">
+          {/* Session ID — moved from header to expanded details */}
+          <DetailSection label="Session">
+            <span className="font-[var(--font-mono)] text-[11px] tracking-wide text-[var(--color-text-muted)]">
+              {session.id}
+            </span>
+          </DetailSection>
+
           <DetailSection label="Timeline">
             <p className="text-[12px] text-[var(--color-text-secondary)]">
               Created {relativeTime(session.createdAt)}
@@ -272,7 +296,7 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
                       {c.path}
                     </span>
                     <a href={c.url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[11px] text-[var(--color-accent)] hover:underline">
-                      view →
+                      view
                     </a>
                   </div>
                 ))}
@@ -307,12 +331,21 @@ export function SessionCard({ session, onSend, onKill, onMerge, onRestore }: Ses
               </button>
             )}
             {!isTerminal && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onKill?.(session.id); }}
-                className="rounded border border-[rgba(239,68,68,0.35)] px-2.5 py-1 text-[11px] text-[var(--color-status-error)] transition-colors hover:bg-[rgba(239,68,68,0.1)]"
-              >
-                terminate
-              </button>
+              <>
+                <a
+                  href={`/sessions/${encodeURIComponent(session.id)}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="rounded border border-[var(--color-border-default)] bg-[var(--color-bg-subtle)] px-2.5 py-1 text-[11px] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] hover:no-underline"
+                >
+                  terminal
+                </a>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onKill?.(session.id); }}
+                  className="rounded border border-[rgba(239,68,68,0.35)] px-2.5 py-1 text-[11px] text-[var(--color-status-error)] transition-colors hover:bg-[rgba(239,68,68,0.1)]"
+                >
+                  terminate
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -338,6 +371,7 @@ interface Alert {
   className: string;
   url: string;
   count?: number;
+  priority: number;
   actionLabel?: string;
   actionMessage?: string;
 }
@@ -353,7 +387,6 @@ function getAlerts(session: DashboardSession): Alert[] {
   const hasConflict = !pr.mergeability.noConflicts;
   const hasComments = pr.unresolvedThreads > 0;
 
-  // CI failure — never suppressed, action message covers comments too
   if (hasCIFail) {
     const failedCheck = pr.ciChecks.find((c) => c.status === "failed");
     const failCount = pr.ciChecks.filter((c) => c.status === "failed").length;
@@ -361,6 +394,7 @@ function getAlerts(session: DashboardSession): Alert[] {
       alerts.push({
         key: "ci-unknown",
         label: "CI unknown",
+        priority: 1,
         className: "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--color-status-attention)]",
         url: pr.url + "/checks",
       });
@@ -368,6 +402,7 @@ function getAlerts(session: DashboardSession): Alert[] {
       alerts.push({
         key: "ci-fail",
         label: `${failCount} CI check${failCount > 1 ? "s" : ""} failing`,
+        priority: 1,
         className: "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
         url: failedCheck?.url ?? pr.url + "/checks",
         actionLabel: "ask to fix",
@@ -376,11 +411,11 @@ function getAlerts(session: DashboardSession): Alert[] {
     }
   }
 
-  // Merge conflict — never suppressed
   if (hasConflict) {
     alerts.push({
       key: "conflict",
       label: "merge conflict",
+      priority: 2,
       className: "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
       url: pr.url,
       actionLabel: "ask to fix",
@@ -388,13 +423,13 @@ function getAlerts(session: DashboardSession): Alert[] {
     });
   }
 
-  // Unresolved comments — suppressed when CI is failing (ci-fail action covers them)
   if (hasComments && !hasCIFail) {
     const firstUrl = pr.unresolvedComments[0]?.url ?? pr.url + "/files";
     alerts.push({
       key: "comments",
       label: "unresolved comments",
       count: pr.unresolvedThreads,
+      priority: 3,
       className: "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
       url: firstUrl,
       actionLabel: "ask to resolve",
@@ -402,17 +437,16 @@ function getAlerts(session: DashboardSession): Alert[] {
     });
   }
 
-  // Changes requested — info-only label when comments or CI are shown
   if (pr.reviewDecision === "changes_requested") {
     alerts.push({
       key: "changes",
       label: "changes requested",
+      priority: 4,
       className: "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] text-[var(--color-status-error)]",
       url: pr.url,
     });
   }
 
-  // Needs review — info-only label when any other alert is present
   const hasActionableAlert = hasCIFail || hasConflict || hasComments;
   if (
     !hasActionableAlert &&
@@ -423,10 +457,13 @@ function getAlerts(session: DashboardSession): Alert[] {
     alerts.push({
       key: "review",
       label: "needs review",
+      priority: 5,
       className: "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--color-status-attention)]",
       url: pr.url,
     });
   }
 
+  // Sort by priority so highest-priority alert becomes the primary action
+  alerts.sort((a, b) => a.priority - b.priority);
   return alerts;
 }

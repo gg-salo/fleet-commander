@@ -9,6 +9,7 @@ import type {
   PRListItem,
   ReviewBatch,
 } from "@/lib/types";
+import type { ConflictReport } from "@composio/ao-core";
 import { DependencyGraph } from "./DependencyGraph";
 
 type PlanStep =
@@ -43,6 +44,7 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
   const [featureDescription, setFeatureDescription] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [editedTasks, setEditedTasks] = useState<PlanTask[]>([]);
+  const [conflictReport, setConflictReport] = useState<ConflictReport | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Discovery state
@@ -122,12 +124,13 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
             `/api/plan/${encodeURIComponent(planId)}?projectId=${encodeURIComponent(selectedProject)}`,
           );
           if (!res.ok) return;
-          const data = (await res.json()) as { plan: Plan };
+          const data = (await res.json()) as { plan: Plan; conflicts?: ConflictReport };
           setPlan(data.plan);
 
           if (data.plan.status === "ready") {
             if (pollRef.current) clearInterval(pollRef.current);
             setEditedTasks(data.plan.tasks);
+            if (data.conflicts) setConflictReport(data.conflicts);
             setPlanStep("review");
           } else if (data.plan.status === "failed") {
             if (pollRef.current) clearInterval(pollRef.current);
@@ -1155,6 +1158,45 @@ export function NewWorkPanel({ projects, onClose }: NewWorkPanelProps) {
               {editedTasks.some((t) => t.dependencies.length > 0) && (
                 <div className="mb-4">
                   <DependencyGraph tasks={editedTasks} />
+                </div>
+              )}
+
+              {/* File conflict warnings */}
+              {conflictReport && conflictReport.conflicts.length > 0 && (
+                <div className={`mb-4 rounded-[8px] border px-4 py-3 ${
+                  conflictReport.hasBlockingConflicts
+                    ? "border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.05)]"
+                    : "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.05)]"
+                }`}>
+                  <div className={`mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider ${
+                    conflictReport.hasBlockingConflicts
+                      ? "text-[var(--color-status-error)]"
+                      : "text-[var(--color-status-attention)]"
+                  }`}>
+                    <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="10" />
+                      <path d="M12 8v4M12 16h.01" />
+                    </svg>
+                    File Conflicts Detected
+                  </div>
+                  <p className="mb-2 text-[11px] text-[var(--color-text-secondary)]">
+                    These concurrent tasks modify the same files. Consider adding dependencies to serialize them.
+                  </p>
+                  <div className="space-y-1.5">
+                    {conflictReport.conflicts.map((c) => (
+                      <div key={c.file} className="flex items-start gap-2 text-[11px]">
+                        <span className={`mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${
+                          c.severity === "blocking" ? "bg-[var(--color-status-error)]" : "bg-[var(--color-status-attention)]"
+                        }`} />
+                        <div>
+                          <span className="font-[var(--font-mono)] text-[10px] text-[var(--color-text-primary)]">{c.file}</span>
+                          <span className="ml-2 text-[var(--color-text-muted)]">
+                            — {c.taskTitles.join(", ")}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 

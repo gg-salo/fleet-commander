@@ -13,10 +13,16 @@ interface LiveData {
   refresh: () => Promise<void>;
 }
 
+/** Debounce duration (ms) before accepting "active" → "ready" transitions. */
+const ACTIVITY_DEBOUNCE_MS = 30_000;
+
 /**
  * Connects to the SSE `/api/events` stream and auto-refreshes sessions
  * when the lightweight snapshot fingerprint changes, or every 30s to
  * catch PR-level state changes (CI completing, reviews arriving).
+ *
+ * Includes activity debounce: when a session transitions from "active" to
+ * "ready", we keep showing "active" for 30s to suppress flicker.
  */
 export function useLiveSessions(
   initialSessions: DashboardSession[],
@@ -26,6 +32,28 @@ export function useLiveSessions(
   const [stats, setStats] = useState(initialStats);
   const fetchingRef = useRef(false);
   const fingerprintRef = useRef("");
+
+  // Track when each session was last seen as "active" for debounce
+  const lastActiveRef = useRef<Map<string, number>>(new Map());
+
+  /** Apply activity debounce: suppress "active" → "ready" flicker. */
+  const debounceSessions = useCallback((incoming: DashboardSession[]): DashboardSession[] => {
+    const now = Date.now();
+    return incoming.map((s) => {
+      if (s.activity === "active") {
+        lastActiveRef.current.set(s.id, now);
+        return s;
+      }
+      if (s.activity === "ready") {
+        const lastActive = lastActiveRef.current.get(s.id);
+        if (lastActive && now - lastActive < ACTIVITY_DEBOUNCE_MS) {
+          // Still within debounce window — show as "active"
+          return { ...s, activity: "active" };
+        }
+      }
+      return s;
+    });
+  }, []);
 
   const fetchFull = useCallback(async () => {
     if (fetchingRef.current) return;
@@ -37,14 +65,14 @@ export function useLiveSessions(
         sessions: DashboardSession[];
         stats: DashboardStats;
       };
-      setSessions(data.sessions);
+      setSessions(debounceSessions(data.sessions));
       setStats(data.stats);
     } catch {
       // Network error — skip, retry on next trigger
     } finally {
       fetchingRef.current = false;
     }
-  }, []);
+  }, [debounceSessions]);
 
   useEffect(() => {
     // Compute fingerprint from snapshot sessions

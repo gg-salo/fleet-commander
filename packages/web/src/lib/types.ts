@@ -85,6 +85,10 @@ export interface DashboardSession {
   createdAt: string;
   lastActivityAt: string;
   pr: DashboardPR | null;
+  /** What the agent is currently doing (e.g. "Editing src/types.ts") */
+  activityDetail: string | null;
+  /** Plan ID this session belongs to (for grouping in Done view) */
+  planId: string | null;
   metadata: Record<string, string>;
 }
 
@@ -134,11 +138,14 @@ export interface DashboardUnresolvedComment {
   body: string;
 }
 
+export type FilterMode = "all" | "action" | "working" | "done";
+
 export interface DashboardStats {
   totalSessions: number;
   workingSessions: number;
   openPRs: number;
   needsReview: number;
+  attentionCounts: Record<AttentionLevel, number>;
 }
 
 export interface DailySummary {
@@ -241,6 +248,13 @@ export function getAttentionLevel(session: DashboardSession): AttentionLevel {
   }
   // Exited agent with non-terminal status = crashed, needs human attention
   if (session.activity === ACTIVITY_STATE.EXITED) {
+    return "respond";
+  }
+  // Zombie: idle for >10 min with non-terminal status — process may be dead
+  if (
+    session.activity === ACTIVITY_STATE.IDLE &&
+    Date.now() - new Date(session.lastActivityAt).getTime() > 10 * 60_000
+  ) {
     return "respond";
   }
 

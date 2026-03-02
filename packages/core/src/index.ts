@@ -181,6 +181,10 @@ export {
 export { createReviewBatchService } from "./review-batch-service.js";
 export type { ReviewBatchService, ReviewBatchServiceDeps } from "./review-batch-service.js";
 
+// Conflict detection — file conflict prediction for parallel plan tasks
+export { predictConflicts } from "./conflict-detector.js";
+export type { FileConflict, ConflictReport } from "./conflict-detector.js";
+
 // Shared utilities
 export { shellEscape, escapeAppleScript, validateUrl, readLastJsonlEntry } from "./utils.js";
 

@@ -238,6 +238,27 @@ describe("getAttentionLevel", () => {
     });
   });
 
+  // ── ZOMBIE — stale idle sessions routed to respond ──────────────────
+
+  describe("zombie sessions", () => {
+    it("returns respond for idle session older than 10 minutes", () => {
+      const fifteenMinAgo = new Date(Date.now() - 15 * 60_000).toISOString();
+      const session = makeSession({ status: "working", activity: "idle", lastActivityAt: fifteenMinAgo, pr: null });
+      expect(getAttentionLevel(session)).toBe("respond");
+    });
+
+    it("returns working for idle session within 10 minutes", () => {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+      const session = makeSession({ status: "working", activity: "idle", lastActivityAt: fiveMinAgo, pr: null });
+      expect(getAttentionLevel(session)).toBe("working");
+    });
+
+    it("returns respond for exited session with non-terminal status (zombie)", () => {
+      const session = makeSession({ status: "working", activity: "exited", pr: null });
+      expect(getAttentionLevel(session)).toBe("respond");
+    });
+  });
+
   // ── WORKING (blue zone — agents doing their thing) ─────────────────
 
   describe("working zone", () => {

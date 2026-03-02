@@ -15,7 +15,7 @@ import type {
   OrchestratorConfig,
   PluginRegistry,
 } from "@composio/ao-core";
-import { type DashboardSession, type DashboardPR, type DashboardStats, type DailySummary, getAttentionLevel } from "./types";
+import { type DashboardSession, type DashboardPR, type DashboardStats, type DailySummary, type AttentionLevel, getAttentionLevel } from "./types";
 import { TTLCache, prCache, prCacheKey, type PREnrichmentData } from "./cache";
 
 /** Cache for issue titles (5 min TTL — issue titles rarely change) */
@@ -61,6 +61,8 @@ export function sessionToDashboard(session: Session): DashboardSession {
     createdAt: session.createdAt.toISOString(),
     lastActivityAt: session.lastActivityAt.toISOString(),
     pr: session.pr ? basicPRToDashboard(session.pr) : null,
+    activityDetail: session.activityDetail?.label ?? null,
+    planId: session.metadata["planId"] ?? null,
     metadata: session.metadata,
   };
 }
@@ -430,11 +432,26 @@ export function computeDailySummary(
 
 /** Compute dashboard stats from a list of sessions. */
 export function computeStats(sessions: DashboardSession[]): DashboardStats {
+  const attentionCounts: Record<string, number> = {
+    merge: 0,
+    respond: 0,
+    review: 0,
+    pending: 0,
+    working: 0,
+    done: 0,
+  };
+
+  for (const s of sessions) {
+    const level = getAttentionLevel(s);
+    attentionCounts[level] = (attentionCounts[level] ?? 0) + 1;
+  }
+
   return {
     totalSessions: sessions.length,
     workingSessions: sessions.filter((s) => s.activity === "active").length,
     openPRs: sessions.filter((s) => s.pr?.state === "open").length,
     needsReview: sessions.filter((s) => s.pr && !s.pr.isDraft && s.pr.reviewDecision === "pending")
       .length,
+    attentionCounts: attentionCounts as Record<AttentionLevel, number>,
   };
 }

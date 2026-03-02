@@ -234,6 +234,9 @@ interface JsonlLine {
   type?: string;
   summary?: string;
   message?: { content?: string; role?: string };
+  // Tool use fields
+  tool_name?: string;
+  tool_input?: Record<string, unknown>;
   // Cost/usage fields
   costUSD?: number;
   usage?: {
@@ -245,6 +248,58 @@ interface JsonlLine {
   inputTokens?: number;
   outputTokens?: number;
   estimatedCostUsd?: number;
+}
+
+/**
+ * Extract a human-readable activity label from the most recent tool_use JSONL entry.
+ * Exported for testing.
+ */
+export function extractLastToolActivity(lines: JsonlLine[]): string | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (line?.type !== "tool_use" || !line.tool_name) continue;
+
+    const input = line.tool_input ?? {};
+
+    switch (line.tool_name) {
+      case "Read": {
+        const filePath = typeof input["file_path"] === "string" ? input["file_path"] : null;
+        return filePath ? `Reading ${shortenPath(filePath)}` : "Reading file";
+      }
+      case "Edit": {
+        const filePath = typeof input["file_path"] === "string" ? input["file_path"] : null;
+        return filePath ? `Editing ${shortenPath(filePath)}` : "Editing file";
+      }
+      case "Write": {
+        const filePath = typeof input["file_path"] === "string" ? input["file_path"] : null;
+        return filePath ? `Writing ${shortenPath(filePath)}` : "Writing file";
+      }
+      case "Bash": {
+        const cmd = typeof input["command"] === "string" ? input["command"] : null;
+        if (!cmd) return "Running command";
+        const firstWord = cmd.trim().split(/\s+/)[0] ?? "command";
+        return `Running ${firstWord}`;
+      }
+      case "Grep":
+      case "Glob":
+        return "Searching codebase";
+      case "WebFetch":
+      case "WebSearch":
+        return "Searching web";
+      case "Task":
+        return "Running sub-agent";
+      default:
+        return `Using ${line.tool_name}`;
+    }
+  }
+  return null;
+}
+
+/** Shorten an absolute path to just filename or last 2 segments. */
+function shortenPath(filePath: string): string {
+  const parts = filePath.split("/").filter(Boolean);
+  if (parts.length <= 2) return parts.join("/");
+  return parts.slice(-2).join("/");
 }
 
 /**
@@ -679,17 +734,20 @@ function createClaudeCodeAgent(): Agent {
       const ageMs = Date.now() - entry.modifiedAt.getTime();
       const timestamp = entry.modifiedAt;
 
+      let state: ActivityDetection["state"];
       switch (entry.lastType) {
         case "user":
         case "tool_use":
         case "progress":
-          return { state: ageMs > threshold ? "idle" : "active", timestamp };
+          state = ageMs > threshold ? "idle" : "active";
+          break;
 
         case "assistant":
         case "system":
         case "summary":
         case "result":
-          return { state: ageMs > threshold ? "idle" : "ready", timestamp };
+          state = ageMs > threshold ? "idle" : "ready";
+          break;
 
         case "permission_request":
           return { state: "waiting_input", timestamp };
@@ -698,8 +756,26 @@ function createClaudeCodeAgent(): Agent {
           return { state: "blocked", timestamp };
 
         default:
-          return { state: ageMs > threshold ? "idle" : "active", timestamp };
+          state = ageMs > threshold ? "idle" : "active";
+          break;
       }
+
+      // Extract activity detail (what tool the agent last used) when active
+      let activityDetail: ActivityDetection["activityDetail"];
+      if (state === "active") {
+        try {
+          // Read a small tail of the JSONL to find the last tool_use
+          const tailLines = await parseJsonlFileTail(sessionFile, 32_768);
+          const label = extractLastToolActivity(tailLines);
+          if (label) {
+            activityDetail = { label, timestamp };
+          }
+        } catch {
+          // Non-fatal — skip activity detail
+        }
+      }
+
+      return { state, timestamp, activityDetail };
     },
 
     async getSessionInfo(session: Session): Promise<AgentSessionInfo | null> {
