@@ -232,3 +232,61 @@ a:hover {
 .dep-node:hover {
   border-color: var(--color-border-strong);
 }
+
+/* ── Pipeline view ─────────────────────────────────────────────────── */
+
+@keyframes pipeline-flow {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.pipeline-card {
+  background: linear-gradient(175deg, rgba(28,36,47,1) 0%, rgba(18,23,31,1) 100%);
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.9),
+    0 3px 10px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.07);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+  border-radius: 7px;
+
+  --color-text-secondary: #8b949e;
+  --color-text-muted:     #656d76;
+  --color-text-tertiary:  #656d76;
+}
+
+.pipeline-card:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 8px rgba(0,0,0,0.85),
+    0 10px 24px rgba(0,0,0,0.45),
+    inset 0 1px 0 rgba(255,255,255,0.1);
+}
+
+.pipeline-card.card-merge-ready {
+  background: linear-gradient(175deg, rgba(16,40,24,1) 0%, rgba(10,26,15,1) 100%);
+  box-shadow:
+    0 0 0 1px rgba(63,185,80,0.22),
+    0 1px 2px rgba(0,0,0,0.9),
+    0 3px 10px rgba(0,0,0,0.55),
+    0 0 30px rgba(63,185,80,0.1),
+    inset 0 1px 0 rgba(255,255,255,0.07);
+}
+
+.pipeline-column {
+  min-height: 200px;
+}
+
+.pipeline-canvas {
+  user-select: none;
+}
+
+.pipeline-flow {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(88,166,255,0.3) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: pipeline-flow 2s linear infinite;
+}

@@ -13,9 +13,11 @@ import {
 } from "@/lib/types";
 import { CI_STATUS } from "@composio/ao-core/types";
 import { useLiveSessions } from "@/hooks/use-live-sessions";
+import { useViewMode } from "@/hooks/use-view-mode";
 import { PipelineStats } from "./PipelineStats";
 import { FilterTabs } from "./FilterTabs";
 import { SessionGrid } from "./SessionGrid";
+import { PipelineView } from "./PipelineView";
 import { ActivityFeed } from "./ActivityFeed";
 import { CommandBar } from "./CommandBar";
 import { PRTableRow } from "./PRStatus";
@@ -35,6 +37,7 @@ interface DashboardProps {
 
 export function Dashboard({ sessions, stats, orchestratorId, projectName, projects = [] }: DashboardProps) {
   const { liveSessions, liveStats, refresh } = useLiveSessions(sessions, stats);
+  const { viewMode, setViewMode } = useViewMode();
   const [rateLimitDismissed, setRateLimitDismissed] = useState(false);
   const [newWorkOpen, setNewWorkOpen] = useState(false);
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
@@ -147,6 +150,27 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
             />
           </div>
           <div className="flex items-center gap-2.5">
+            {/* View toggle (hidden on mobile) */}
+            <div className="hidden md:flex items-center rounded-[5px] border border-[var(--color-border-default)] p-0.5">
+              <button
+                onClick={() => setViewMode("list")}
+                className={`rounded px-1.5 py-1 transition-colors ${viewMode === "list" ? "bg-[var(--color-bg-subtle)] text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"}`}
+                aria-label="List view"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setViewMode("pipeline")}
+                className={`rounded px-1.5 py-1 transition-colors ${viewMode === "pipeline" ? "bg-[var(--color-bg-subtle)] text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"}`}
+                aria-label="Pipeline view"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M3 12h4l3-9 4 18 3-9h4" />
+                </svg>
+              </button>
+            </div>
             {/* Sidebar toggle */}
             <button
               onClick={toggleSidebar}
@@ -192,89 +216,101 @@ export function Dashboard({ sessions, stats, orchestratorId, projectName, projec
 
       {/* Main content + sidebar */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Main scrollable area */}
-        <main className="flex-1 overflow-y-auto px-6">
-          {/* Filter tabs */}
-          <FilterTabs
-            activeFilter={filterMode}
-            counts={liveStats.attentionCounts}
-            onFilterChange={setFilterMode}
-          />
-
-          {/* Rate limit notice */}
-          {anyRateLimited && !rateLimitDismissed && (
-            <div className="mx-1 mt-4 flex items-center gap-2.5 rounded border border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.05)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
-              <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 8v4M12 16h.01" />
-              </svg>
-              <span className="flex-1">
-                GitHub API rate limited — PR data may be stale. Will retry automatically.
-              </span>
-              <button
-                onClick={() => setRateLimitDismissed(true)}
-                className="ml-1 shrink-0 opacity-60 hover:opacity-100"
-                aria-label="Dismiss"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          )}
-
-          {/* Session grid */}
-          <SessionGrid
+        {viewMode === "pipeline" ? (
+          <PipelineView
             sessions={liveSessions}
-            filter={filterMode}
+            stats={liveStats}
+            projects={projects}
             onSend={handleSend}
             onKill={handleKill}
             onMerge={handleMerge}
             onRestore={handleRestore}
           />
+        ) : (
+          /* List view — main scrollable area */
+          <main className="flex-1 overflow-y-auto px-6">
+            {/* Filter tabs */}
+            <FilterTabs
+              activeFilter={filterMode}
+              counts={liveStats.attentionCounts}
+              onFilterChange={setFilterMode}
+            />
 
-          {/* Plan History */}
-          {projects.length > 0 && (
-            <div className="mt-4">
-              <PlanHistory projects={projects} />
-            </div>
-          )}
-
-          {/* Discovery History */}
-          {projects.length > 0 && (
-            <div className="mt-4">
-              <DiscoveryHistory projects={projects} />
-            </div>
-          )}
-
-          {/* PR Table */}
-          {openPRs.length > 0 && (
-            <div className="mx-auto mt-6 mb-8 max-w-[900px]">
-              <h2 className="mb-3 px-1 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
-                Pull Requests
-              </h2>
-              <div className="overflow-hidden rounded-[6px] border border-[var(--color-border-default)]">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="border-b border-[var(--color-border-muted)]">
-                      <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">PR</th>
-                      <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Title</th>
-                      <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Size</th>
-                      <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">CI</th>
-                      <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Review</th>
-                      <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Unresolved</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {openPRs.map((pr) => (
-                      <PRTableRow key={pr.number} pr={pr} />
-                    ))}
-                  </tbody>
-                </table>
+            {/* Rate limit notice */}
+            {anyRateLimited && !rateLimitDismissed && (
+              <div className="mx-1 mt-4 flex items-center gap-2.5 rounded border border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.05)] px-3.5 py-2.5 text-[11px] text-[var(--color-status-attention)]">
+                <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 8v4M12 16h.01" />
+                </svg>
+                <span className="flex-1">
+                  GitHub API rate limited — PR data may be stale. Will retry automatically.
+                </span>
+                <button
+                  onClick={() => setRateLimitDismissed(true)}
+                  className="ml-1 shrink-0 opacity-60 hover:opacity-100"
+                  aria-label="Dismiss"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-            </div>
-          )}
-        </main>
+            )}
+
+            {/* Session grid */}
+            <SessionGrid
+              sessions={liveSessions}
+              filter={filterMode}
+              onSend={handleSend}
+              onKill={handleKill}
+              onMerge={handleMerge}
+              onRestore={handleRestore}
+            />
+
+            {/* Plan History */}
+            {projects.length > 0 && (
+              <div className="mt-4">
+                <PlanHistory projects={projects} />
+              </div>
+            )}
+
+            {/* Discovery History */}
+            {projects.length > 0 && (
+              <div className="mt-4">
+                <DiscoveryHistory projects={projects} />
+              </div>
+            )}
+
+            {/* PR Table */}
+            {openPRs.length > 0 && (
+              <div className="mx-auto mt-6 mb-8 max-w-[900px]">
+                <h2 className="mb-3 px-1 text-[10px] font-bold uppercase tracking-[0.10em] text-[var(--color-text-tertiary)]">
+                  Pull Requests
+                </h2>
+                <div className="overflow-hidden rounded-[6px] border border-[var(--color-border-default)]">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="border-b border-[var(--color-border-muted)]">
+                        <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">PR</th>
+                        <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Title</th>
+                        <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Size</th>
+                        <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">CI</th>
+                        <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Review</th>
+                        <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Unresolved</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {openPRs.map((pr) => (
+                        <PRTableRow key={pr.number} pr={pr} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </main>
+        )}
 
         {/* Activity feed sidebar */}
         {sidebarOpen && (
