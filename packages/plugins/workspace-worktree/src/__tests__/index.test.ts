@@ -106,7 +106,8 @@ describe("create() factory", () => {
   it("uses ~/.worktrees as default base dir", async () => {
     const ws = create();
 
-    // Mock: fetch, worktree add
+    // Mock: prune, fetch, worktree add
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 
@@ -118,6 +119,7 @@ describe("create() factory", () => {
   it("uses custom worktreeDir from config", async () => {
     const ws = create({ worktreeDir: "/custom/worktrees" });
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 
@@ -129,6 +131,7 @@ describe("create() factory", () => {
   it("expands tilde in custom worktreeDir", async () => {
     const ws = create({ worktreeDir: "~/custom-path" });
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 
@@ -142,6 +145,7 @@ describe("workspace.create()", () => {
   it("calls git fetch and git worktree add with correct args", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 
@@ -170,6 +174,7 @@ describe("workspace.create()", () => {
   it("creates the project worktree directory", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 
@@ -183,6 +188,7 @@ describe("workspace.create()", () => {
   it("continues when fetch fails (offline)", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
     mockGitError("Could not resolve host"); // fetch fails
     mockGitSuccess(""); // worktree add succeeds
 
@@ -194,6 +200,7 @@ describe("workspace.create()", () => {
   it("handles branch already exists by adding worktree then checking out", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess(""); // worktree add (without -b)
@@ -219,6 +226,7 @@ describe("workspace.create()", () => {
   it("cleans up worktree on checkout failure", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess(""); // worktree add (without -b)
@@ -240,6 +248,7 @@ describe("workspace.create()", () => {
   it("still throws on checkout failure even if cleanup fails", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitError("already exists"); // worktree add -b fails
     mockGitSuccess(""); // worktree add (without -b)
@@ -254,6 +263,7 @@ describe("workspace.create()", () => {
   it("throws for non-already-exists worktree add errors", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitError("fatal: invalid reference"); // worktree add fails with other error
 
@@ -297,6 +307,7 @@ describe("workspace.create()", () => {
   it("returns correct WorkspaceInfo", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 
@@ -313,6 +324,7 @@ describe("workspace.create()", () => {
   it("expands tilde in project path", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 
