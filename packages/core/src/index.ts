@@ -84,6 +84,21 @@ export { createEventStore } from "./event-store.js";
 // Outcome store — JSONL-backed session outcome records
 export { appendOutcome, readOutcomes, getOutcomesFilePath } from "./outcome-store.js";
 
+// Retrospective store — JSONL-backed retrospective records
+export {
+  appendRetrospective,
+  readRetrospectives,
+  getRetrospectivesFilePath,
+} from "./retrospective-store.js";
+
+// Lesson store — JSONL-backed learned lesson records
+export {
+  appendLessons,
+  readLessons,
+  markLessonsCodified,
+  getLessonsFilePath,
+} from "./lesson-store.js";
+
 // Outcome service — captures structured metrics on session completion
 export { createOutcomeService } from "./outcome-service.js";
 export type { OutcomeService, OutcomeServiceDeps } from "./outcome-service.js";
@@ -118,6 +133,25 @@ export type {
   RetrospectiveService,
   RetrospectiveServiceDeps,
 } from "./retrospective-service.js";
+
+// Plan retrospective prompt — analysis prompt for completed plans
+export { generatePlanRetrospectivePrompt } from "./plan-retrospective-prompt.js";
+export type { PlanRetrospectivePromptConfig } from "./plan-retrospective-prompt.js";
+
+// Plan retrospective service — analyzes completed plans for cross-PR patterns
+export { createPlanRetrospectiveService } from "./plan-retrospective-service.js";
+export type {
+  PlanRetrospectiveService,
+  PlanRetrospectiveServiceDeps,
+} from "./plan-retrospective-service.js";
+
+// Evolve prompt — prompt for CLAUDE.md evolution agent
+export { generateEvolvePrompt } from "./evolve-prompt.js";
+export type { EvolvePromptConfig } from "./evolve-prompt.js";
+
+// Evolve service — proposes CLAUDE.md updates from learned lessons
+export { createEvolveService } from "./evolve-service.js";
+export type { EvolveService, EvolveServiceDeps } from "./evolve-service.js";
 
 // Plan service — planning workflow orchestration
 export { createPlanService } from "./plan-service.js";

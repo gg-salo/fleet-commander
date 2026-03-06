@@ -183,6 +183,11 @@ export interface LifecycleManagerDeps {
   };
   retrospectiveService?: {
     analyze(sessionId: string): Promise<void>;
+    captureOutput(session: Session): Promise<boolean>;
+  };
+  planRetrospectiveService?: {
+    analyze(projectId: string, planId: string): Promise<void>;
+    captureOutput(session: Session): Promise<boolean>;
   };
 }
 
@@ -230,6 +235,7 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     reconciliationService,
     outcomeService,
     retrospectiveService,
+    planRetrospectiveService,
   } = deps;
 
   const states = new Map<SessionId, SessionStatus>();
@@ -246,6 +252,25 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
     const agentName = session.metadata["agent"] ?? project.agent ?? config.defaults.agent;
     const agent = registry.get<Agent>("agent", agentName);
     const scm = project.scm ? registry.get<SCM>("scm", project.scm.plugin) : null;
+
+    // 0. PR merge check first — a merged/closed PR trumps runtime and agent
+    //    activity. Without this, runtime.isAlive() → "killed" or
+    //    detectActivity() → "needs_input" fires before we ever check PR state,
+    //    so the session never transitions to "merged" for externally merged PRs.
+    if (session.pr && scm) {
+      try {
+        const prState = await scm.getPRState(session.pr);
+        if (prState === PR_STATE.MERGED) return "merged";
+        if (prState === PR_STATE.CLOSED && session.status === "killed") return "killed";
+      } catch {
+        // SCM check failed — fall through to other checks
+      }
+    }
+
+    // For killed sessions without a PR (or if SCM check failed), stay killed
+    if (session.status === "killed" && !session.pr) {
+      return "killed";
+    }
 
     // 1. Check if runtime is alive
     if (session.runtimeHandle) {
@@ -1176,6 +1201,18 @@ Then force-push your branch. This ensures CI runs against the latest code.`;
                 );
               }
             }
+
+            // Trigger plan retrospective on plan completion
+            if (planRetrospectiveService) {
+              try {
+                await planRetrospectiveService.analyze(
+                  session.projectId,
+                  session.metadata["planId"],
+                );
+              } catch {
+                // Non-fatal
+              }
+            }
           }
         } catch {
           // Plan completion check failed — will retry next poll
@@ -1213,6 +1250,32 @@ Then force-push your branch. This ensures CI runs against the latest code.`;
           }
         }
       }
+
+      // Capture retrospective output when analysis session completes
+      if (
+        retrospectiveService &&
+        session.branch?.startsWith("retrospective/") &&
+        TERMINAL_STATUSES.has(newStatus)
+      ) {
+        try {
+          await retrospectiveService.captureOutput(session);
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      // Capture plan retrospective output when analysis session completes
+      if (
+        planRetrospectiveService &&
+        session.branch?.startsWith("plan-retrospective/") &&
+        TERMINAL_STATUSES.has(newStatus)
+      ) {
+        try {
+          await planRetrospectiveService.captureOutput(session);
+        } catch {
+          // Non-fatal
+        }
+      }
     } else {
       // No transition but track current state
       states.set(session.id, newStatus);
@@ -1230,9 +1293,13 @@ Then force-push your branch. This ensures CI runs against the latest code.`;
 
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
-      // process that transition even though the new status is terminal)
+      // process that transition even though the new status is terminal).
+      // Also recheck killed sessions that have a PR — the PR may have been merged
+      // externally (e.g., human merged on GitHub) and we need to transition to
+      // "merged" to trigger spawnReadyTasks for dependent plan tasks.
       const sessionsToCheck = sessions.filter((s) => {
         if (s.status !== "merged" && s.status !== "killed") return true;
+        if (s.status === "killed" && s.pr) return true;
         const tracked = states.get(s.id);
         return tracked !== undefined && tracked !== s.status;
       });

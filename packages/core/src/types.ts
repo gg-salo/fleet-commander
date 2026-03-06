@@ -838,6 +838,60 @@ export interface SessionOutcome {
 }
 
 // =============================================================================
+// RETROSPECTIVE RECORDS
+// =============================================================================
+
+/** Category of a session failure identified during retrospective analysis. */
+export type RetrospectiveCategory =
+  | "vague_issue"
+  | "wrong_approach"
+  | "tooling_problem"
+  | "upstream_conflict"
+  | "timeout"
+  | "permission_error"
+  | "unknown";
+
+/** Structured retrospective record captured from analysis agents. */
+export interface RetrospectiveRecord {
+  sessionId: string;
+  projectId: string;
+  planId?: string;
+  failureReason: string;
+  category: RetrospectiveCategory;
+  recommendation: string;
+  confidence: "high" | "medium" | "low";
+  timestamp: string;
+}
+
+// =============================================================================
+// LESSONS
+// =============================================================================
+
+/** Category of a learned lesson from plan retrospectives. */
+export type LessonCategory =
+  | "convention"
+  | "architecture"
+  | "tooling"
+  | "anti_pattern"
+  | "testing"
+  | "security";
+
+/** A quality pattern learned from aggregating PR reviews and session outcomes. */
+export interface Lesson {
+  id: string;
+  projectId: string;
+  planId: string;
+  pattern: string;
+  recommendation: string;
+  category: LessonCategory;
+  severity: "high" | "medium" | "low";
+  occurrences: number;
+  examples?: string[];
+  codified: boolean;
+  timestamp: string;
+}
+
+// =============================================================================
 // REACTIONS
 // =============================================================================
 

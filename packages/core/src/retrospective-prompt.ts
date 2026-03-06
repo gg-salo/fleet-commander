@@ -13,6 +13,8 @@ export interface RetrospectivePromptConfig {
   session: Session;
   events: OrchestratorEvent[];
   terminalOutput: string;
+  /** Absolute path where the agent should also write its output JSON. */
+  localOutputPath?: string;
 }
 
 const MAX_TERMINAL_CHARS = 3000;
@@ -75,7 +77,7 @@ Analyze this session and write a JSON file with the following structure:
 }
 \`\`\`
 
-Write this JSON to \`retrospective-output.json\` in the current directory.
+Write this JSON to \`retrospective-output.json\` in the current directory.${config.localOutputPath ? `\nAlso write a copy to \`${config.localOutputPath}\`.` : ""}
 
 Categories explained:
 - **vague_issue**: The issue description was too ambiguous for the agent to implement

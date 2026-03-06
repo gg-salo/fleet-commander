@@ -20,6 +20,9 @@ import {
   createReviewBatchService,
   createLifecycleManager,
   createEventStore,
+  createRetrospectiveService,
+  createPlanRetrospectiveService,
+  createEvolveService,
   type OrchestratorConfig,
   type PluginRegistry,
   type SessionManager,
@@ -31,6 +34,8 @@ import {
   type EventStore,
   type SCM,
   type ProjectConfig,
+  type PlanRetrospectiveService,
+  type EvolveService,
 } from "@composio/ao-core";
 
 // Static plugin imports — webpack needs these to be string literals
@@ -50,6 +55,8 @@ export interface Services {
   reconciliationService: ReconciliationService;
   reviewBatchService: ReviewBatchService;
   lifecycleManager: LifecycleManager;
+  planRetrospectiveService: PlanRetrospectiveService;
+  evolveService: EvolveService;
   getEventStore(projectId: string): EventStore | null;
 }
 
@@ -92,6 +99,9 @@ async function initServices(): Promise<Services> {
   const discoveryService = createDiscoveryService({ config, sessionManager, registry });
   const reconciliationService = createReconciliationService({ config, sessionManager, registry });
   const reviewBatchService = createReviewBatchService({ config, sessionManager, registry });
+  const retrospectiveService = createRetrospectiveService({ config, sessionManager, registry });
+  const planRetrospectiveService = createPlanRetrospectiveService({ config, sessionManager, registry });
+  const evolveService = createEvolveService({ config, sessionManager, registry });
 
   // Create event stores for each project
   const eventStores = new Map<string, EventStore>();
@@ -111,6 +121,8 @@ async function initServices(): Promise<Services> {
     eventStore: firstEventStore,
     planService,
     reconciliationService,
+    retrospectiveService,
+    planRetrospectiveService,
   });
   lifecycleManager.start(30_000);
 
@@ -123,6 +135,8 @@ async function initServices(): Promise<Services> {
     reconciliationService,
     reviewBatchService,
     lifecycleManager,
+    planRetrospectiveService,
+    evolveService,
     getEventStore(projectId: string): EventStore | null {
       return eventStores.get(projectId) ?? null;
     },

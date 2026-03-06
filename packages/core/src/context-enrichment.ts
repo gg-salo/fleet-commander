@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readOutcomes } from "./outcome-store.js";
+import { readRetrospectives } from "./retrospective-store.js";
+import { readLessons } from "./lesson-store.js";
 import { classifyError } from "./error-classifier.js";
 import {
   TERMINAL_STATUSES,
@@ -136,69 +138,110 @@ export async function gatherDependencyDiffs(
 // PROJECT LESSONS (Feature 5)
 // =============================================================================
 
-/** Derive project lessons from historical outcome records. */
+/** Derive project lessons from historical outcomes, retrospectives, and learned lessons. */
 export function getProjectLessons(
   configPath: string,
   projectPath: string,
 ): string | undefined {
-  const outcomes = readOutcomes(configPath, projectPath, 20);
-  if (outcomes.length === 0) return undefined;
-
   const bullets: string[] = [];
 
-  // Count failing checks by name
-  const checkCounts = new Map<string, number>();
-  for (const o of outcomes) {
-    if (o.failingChecks) {
-      for (const check of o.failingChecks) {
-        checkCounts.set(check, (checkCounts.get(check) ?? 0) + 1);
+  // Source 1: Outcomes — CI failures, retries, failure rate
+  const outcomes = readOutcomes(configPath, projectPath, 20);
+  if (outcomes.length > 0) {
+    // Count failing checks by name
+    const checkCounts = new Map<string, number>();
+    for (const o of outcomes) {
+      if (o.failingChecks) {
+        for (const check of o.failingChecks) {
+          checkCounts.set(check, (checkCounts.get(check) ?? 0) + 1);
+        }
       }
     }
-  }
 
-  // Top 3 failing checks with count >= 2
-  const topChecks = [...checkCounts.entries()]
-    .filter(([, count]) => count >= 2)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
+    // Top 3 failing checks with count >= 2
+    const topChecks = [...checkCounts.entries()]
+      .filter(([, count]) => count >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
 
-  if (topChecks.length > 0) {
-    for (const [checkName, count] of topChecks) {
-      const classification = classifyError(checkName);
+    if (topChecks.length > 0) {
+      for (const [checkName, count] of topChecks) {
+        const classification = classifyError(checkName);
+        bullets.push(
+          `- "${checkName}" has failed ${count} times in recent sessions. ${classification.recommendation}`,
+        );
+      }
+    }
+
+    // Average CI retries
+    const totalRetries = outcomes.reduce((sum, o) => sum + o.ciRetries, 0);
+    const avgRetries = totalRetries / outcomes.length;
+    if (avgRetries > 1.5) {
       bullets.push(
-        `- "${checkName}" has failed ${count} times in recent sessions. ${classification.recommendation}`,
+        `- Average CI retries: ${avgRetries.toFixed(1)} per session. Run checks locally before pushing.`,
+      );
+    }
+
+    // Failure rate
+    const failures = outcomes.filter((o) => o.outcome !== "merged").length;
+    const failureRate = failures / outcomes.length;
+    if (failureRate > 0.3) {
+      const categoryCounts = new Map<string, number>();
+      for (const o of outcomes) {
+        if (o.outcome !== "merged" && o.failingChecks) {
+          for (const check of o.failingChecks) {
+            const cat = classifyError(check).category;
+            categoryCounts.set(cat, (categoryCounts.get(cat) ?? 0) + 1);
+          }
+        }
+      }
+      const topCategory = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+      const catNote = topCategory ? ` Most common issue: ${topCategory[0]}.` : "";
+      bullets.push(
+        `- ${Math.round(failureRate * 100)}% of recent sessions failed.${catNote}`,
       );
     }
   }
 
-  // Average CI retries
-  const totalRetries = outcomes.reduce((sum, o) => sum + o.ciRetries, 0);
-  const avgRetries = totalRetries / outcomes.length;
-  if (avgRetries > 1.5) {
-    bullets.push(
-      `- Average CI retries: ${avgRetries.toFixed(1)} per session. Run checks locally before pushing.`,
-    );
-  }
-
-  // Failure rate
-  const failures = outcomes.filter((o) => o.outcome !== "merged").length;
-  const failureRate = failures / outcomes.length;
-  if (failureRate > 0.3) {
-    // Find the most common error category
-    const categoryCounts = new Map<string, number>();
-    for (const o of outcomes) {
-      if (o.outcome !== "merged" && o.failingChecks) {
-        for (const check of o.failingChecks) {
-          const cat = classifyError(check).category;
-          categoryCounts.set(cat, (categoryCounts.get(cat) ?? 0) + 1);
-        }
+  // Source 2: Retrospectives — failure patterns from analysis agents
+  const retros = readRetrospectives(configPath, projectPath, 20);
+  if (retros.length > 0) {
+    // Group by category and surface top patterns
+    const categoryCounts = new Map<string, { count: number; recommendation: string }>();
+    for (const r of retros) {
+      const existing = categoryCounts.get(r.category);
+      if (existing) {
+        existing.count++;
+      } else {
+        categoryCounts.set(r.category, { count: 1, recommendation: r.recommendation });
       }
     }
-    const topCategory = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1])[0];
-    const catNote = topCategory ? ` Most common issue: ${topCategory[0]}.` : "";
-    bullets.push(
-      `- ${Math.round(failureRate * 100)}% of recent sessions failed.${catNote}`,
-    );
+
+    const topCategories = [...categoryCounts.entries()]
+      .filter(([, v]) => v.count >= 2)
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 3);
+
+    for (const [category, { count, recommendation }] of topCategories) {
+      bullets.push(
+        `- ${count} recent sessions failed due to "${category}": ${recommendation}`,
+      );
+    }
+  }
+
+  // Source 3: Lessons — aggregated quality patterns from plan retrospectives
+  const lessons = readLessons(configPath, projectPath, 30);
+  if (lessons.length > 0) {
+    // Include high/medium severity lessons, prioritize uncoded ones
+    const relevant = lessons
+      .filter((l) => l.severity !== "low")
+      .slice(0, 5);
+
+    for (const lesson of relevant) {
+      bullets.push(
+        `- ${lesson.pattern} → ${lesson.recommendation} (seen ${lesson.occurrences}x, ${lesson.severity} severity)`,
+      );
+    }
   }
 
   if (bullets.length === 0) return undefined;
