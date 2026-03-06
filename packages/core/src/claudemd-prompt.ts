@@ -1,13 +1,21 @@
 /**
  * CLAUDE.md Generator Prompt — generates a prompt for an agent
  * that reads the codebase and creates a comprehensive CLAUDE.md file.
+ *
+ * When historical lessons and retrospectives are available, they are
+ * injected so the generated CLAUDE.md includes evidence-backed
+ * anti-patterns and conventions from the start.
  */
 
-import type { ProjectConfig } from "./types.js";
+import type { Lesson, ProjectConfig, RetrospectiveRecord } from "./types.js";
 
 export interface ClaudeMdPromptConfig {
   projectId: string;
   project: ProjectConfig;
+  /** Learned lessons from plan retrospectives (optional — may not exist yet). */
+  lessons?: Lesson[];
+  /** Retrospective records from failed sessions (optional). */
+  retrospectives?: RetrospectiveRecord[];
 }
 
 /**
@@ -15,7 +23,66 @@ export interface ClaudeMdPromptConfig {
  * and produce a high-quality CLAUDE.md file, then open a PR.
  */
 export function generateClaudeMdPrompt(opts: ClaudeMdPromptConfig): string {
-  const { project } = opts;
+  const { project, lessons, retrospectives } = opts;
+
+  // Build learned-patterns section if data is available
+  let learnedSection = "";
+  if ((lessons && lessons.length > 0) || (retrospectives && retrospectives.length > 0)) {
+    const parts: string[] = [];
+
+    if (lessons && lessons.length > 0) {
+      const high = lessons.filter((l) => l.severity === "high");
+      const medium = lessons.filter((l) => l.severity === "medium");
+
+      if (high.length > 0) {
+        parts.push("**Critical patterns (cause failures):**");
+        for (const l of high) {
+          parts.push(`- ${l.pattern} → ${l.recommendation} (seen ${l.occurrences}x) [${l.category}]`);
+        }
+      }
+      if (medium.length > 0) {
+        parts.push("**Review-rejection patterns:**");
+        for (const l of medium) {
+          parts.push(`- ${l.pattern} → ${l.recommendation} (seen ${l.occurrences}x) [${l.category}]`);
+        }
+      }
+    }
+
+    if (retrospectives && retrospectives.length > 0) {
+      // Group by category
+      const counts = new Map<string, { count: number; sample: string }>();
+      for (const r of retrospectives) {
+        const existing = counts.get(r.category);
+        if (existing) {
+          existing.count++;
+        } else {
+          counts.set(r.category, { count: 1, sample: r.recommendation });
+        }
+      }
+      const topCategories = [...counts.entries()]
+        .filter(([, v]) => v.count >= 2)
+        .sort((a, b) => b[1].count - a[1].count);
+
+      if (topCategories.length > 0) {
+        parts.push("**Recurring failure patterns from agent sessions:**");
+        for (const [category, { count, sample }] of topCategories) {
+          parts.push(`- ${category}: ${count} failures — ${sample}`);
+        }
+      }
+    }
+
+    if (parts.length > 0) {
+      learnedSection = `
+## Learned Patterns from Agent History
+
+The following patterns were identified from real agent sessions on this project.
+Incorporate these into the relevant CLAUDE.md sections (anti-patterns, conventions,
+common mistakes). These are evidence-backed — prioritize them over guesses.
+
+${parts.join("\n")}
+`;
+    }
+  }
 
   return `# Task: Generate CLAUDE.md for ${project.name}
 
@@ -77,7 +144,7 @@ Your job is to deeply analyze the codebase and generate a comprehensive \`CLAUDE
    - Write \`CLAUDE.md\` to the project root
    - Commit with message: "chore: add CLAUDE.md for AI agent guidance"
    - Open a PR on branch \`chore/add-claude-md\` targeting \`${project.defaultBranch}\`
-
+${learnedSection}
 ## Rules
 
 - **DO NOT modify any existing files** — only create CLAUDE.md
@@ -85,5 +152,5 @@ Your job is to deeply analyze the codebase and generate a comprehensive \`CLAUDE
 - Use concrete examples from the actual codebase, not generic advice
 - Include the actual commands from package.json scripts
 - Do not include information you're unsure about — only document what you can verify
-`;
+${lessons && lessons.length > 0 ? "- **Prioritize learned patterns** — anti-patterns and conventions from the Learned Patterns section above are evidence-backed from real agent sessions. These MUST appear in the generated CLAUDE.md (in the appropriate section).\n" : ""}`;
 }

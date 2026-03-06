@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { validateIdentifier } from "@/lib/validation";
 import { getServices } from "@/lib/services";
 import { sessionToDashboard } from "@/lib/serialize";
-import { generateClaudeMdPrompt } from "@composio/ao-core";
+import { generateClaudeMdPrompt, readLessons, readRetrospectives } from "@composio/ao-core";
 
 /** POST /api/generate-claudemd — Spawn a CLAUDE.md generator agent session */
 export async function POST(request: NextRequest) {
@@ -26,7 +26,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Project "${projectId}" not found` }, { status: 404 });
     }
 
-    const prompt = generateClaudeMdPrompt({ projectId, project });
+    // Inject learned patterns if available
+    const lessons = readLessons(config.configPath, project.path, 30);
+    const retrospectives = readRetrospectives(config.configPath, project.path, 20);
+
+    const prompt = generateClaudeMdPrompt({
+      projectId,
+      project,
+      lessons: lessons.length > 0 ? lessons : undefined,
+      retrospectives: retrospectives.length > 0 ? retrospectives : undefined,
+    });
     const session = await sessionManager.spawn({
       projectId,
       prompt,
